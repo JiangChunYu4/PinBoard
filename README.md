@@ -54,6 +54,17 @@ npm run dev
 npm run tauri build
 ```
 
+## GitHub Release（自动构建）
+
+仓库已配置手动触发的 Actions：`.github/workflows/release.yml`。
+
+1. 推送代码到 GitHub
+2. 打开仓库 **Actions** → **Release** → **Run workflow**
+3. 可选勾选 draft / prerelease，然后运行
+4. 构建完成后会创建 `v{version}` Release，并附带 Windows NSIS 安装包
+
+版本号来自 `src-tauri/tauri.conf.json` 的 `version`。若报权限错误，到仓库 **Settings → Actions → General → Workflow permissions** 勾选 **Read and write permissions**。
+
 ## 项目结构
 
 ```

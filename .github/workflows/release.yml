@@ -1,0 +1,54 @@
+# Manual Windows NSIS build + GitHub Release via tauri-action.
+# Trigger: Actions → Release → Run workflow
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Create as draft release
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark as prerelease
+        type: boolean
+        default: false
+
+jobs:
+  publish-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and upload release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: PinBoard v__VERSION__
+          releaseBody: |
+            Download the Windows installer from Assets below.
+
+            从下方 Assets 下载 Windows 安装包（NSIS `.exe`）。
+          releaseDraft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
