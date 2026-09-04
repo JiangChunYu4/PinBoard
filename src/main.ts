@@ -37,6 +37,13 @@ function showToast(message: string) {
   toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1400);
 }
 
+function applyPanelOpacity(value: number) {
+  const alpha = Math.min(1, Math.max(0.4, value));
+  document.documentElement.style.setProperty("--panel-opacity", String(alpha));
+  const shell = document.querySelector<HTMLElement>(".shell");
+  if (shell) shell.style.setProperty("--panel-opacity", String(alpha));
+}
+
 async function persist() {
   await saveBlocks(data.blocks, data.window);
 }
@@ -229,7 +236,7 @@ function render() {
   const opacityPct = Math.round(data.window.opacity * 100);
 
   app.innerHTML = `
-    <div class="shell" style="--panel-opacity: ${data.window.opacity}">
+    <div class="shell">
       ${renderTitlebar()}
       <main class="content">
         <div class="toolbar">
@@ -247,6 +254,7 @@ function render() {
     </div>
   `;
 
+  applyPanelOpacity(data.window.opacity);
   bindEvents();
 }
 
@@ -263,10 +271,8 @@ function bindEvents() {
   document.querySelector("#opacity-range")?.addEventListener("input", async (e) => {
     const value = Number((e.target as HTMLInputElement).value) / 100;
     data.window.opacity = value;
-    await applyWindowConfig(data.window);
+    applyPanelOpacity(value);
     await persist();
-    const shell = document.querySelector<HTMLElement>(".shell");
-    if (shell) shell.style.setProperty("--panel-opacity", String(value));
   });
 
   document.querySelector("#btn-minimize")?.addEventListener("click", async () => {
