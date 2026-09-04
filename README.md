@@ -1,81 +1,79 @@
 # PinBoard
 
-轻量级桌面置顶文本管理工具。把常用命令、代码片段、账号信息等固定在桌面，一键复制。
+<p align="center">
+  <img src="src-tauri/icons/128x128.png" width="96" alt="PinBoard" />
+</p>
 
-## 功能（MVP）
+<p align="center">
+  <strong>一款轻量、离线的桌面工具，用于快速查看和复制固定文本。</strong>
+</p>
 
-- 窗口置顶、无边框拖动、可调整大小
-- 多区域独立管理文本
-- 一键复制到系统剪贴板
-- 双击 / 编辑按钮修改内容
-- 拖拽调整区域顺序
-- 本地 JSON 持久化（关闭后自动恢复）
-- 透明度调节
+<p align="center">
+  <a href="https://github.com/JiangChunYu4/PinBoard/releases/latest"><img src="https://img.shields.io/github/v/release/JiangChunYu4/PinBoard?style=for-the-badge&label=Download&logo=github" alt="Latest Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
+</p>
 
-## 技术栈
+<p align="center">
+  <img src="https://img.shields.io/badge/Tauri-2-FFC131?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri 2" />
+  <img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
+</p>
 
-- Tauri 2
-- Vite + TypeScript
-- 本地文件存储（`%APPDATA%/com.pinboard.desktop/pinboard.json`）
+---
 
-## 开发环境要求
+## ✨ 功能
 
-- Node.js 18+
-- Rust stable（[rustup](https://rustup.rs/)）
-- Windows 10/11
-- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)（WebView2 通常已预装）
+| | |
+| --- | --- |
+| 📌 **始终置顶** | 悬浮在其他窗口之上，随时可见 |
+| 📋 **一键复制** | 点击区域名称，全文写入系统剪贴板 |
+| 🗂️ **多区域管理** | 文本分区存放，互不干扰 |
+| ✏️ **快捷编辑** | 双击区域或点 ✎ 即可修改 |
+| ↕️ **拖拽排序** | 拖动标题调整区域顺序 |
+| 👁️ **显示行数** | 每个区域可单独限制展示行数（`0` = 全部） |
+| 🌫️ **透明度** | 滑条调节面板透明度，不挡视线 |
+| 💾 **本地保存** | 数据存在本机，关闭后自动恢复，无需联网 |
 
-## 启动
+---
 
-在 **x64 Native Tools / Developer Command Prompt** 环境，或先初始化 MSVC 后再运行：
+## ⬇️ 下载安装
 
-```powershell
-# PowerShell 示例
-$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-cmd /c "`"$vcvars`" && set PATH=%USERPROFILE%\.cargo\bin;%PATH% && cd /d d:\PycharmProjects\PinBoard && npm run tauri -- dev"
-```
+1. 打开 [最新 Release](https://github.com/JiangChunYu4/PinBoard/releases/latest)
+2. 下载 **`PinBoard_*_x64-setup.exe`**
+3. 运行安装包，按提示完成安装
 
-日常开发（已配置好 PATH / MSVC 时）：
+> 系统要求：Windows 10 / 11（一般已自带 WebView2）
+
+安装后从开始菜单启动 **PinBoard** 即可。
+
+---
+
+## 🚀 快速上手
+
+1. 点 **＋ 新增区域**，写入标题和内容  
+2. **点击区域名称** → 复制成功  
+3. **双击区域** 或点 **✎** → 编辑  
+4. 拖动标题 → 调整顺序  
+5. 顶部滑条 → 调整透明度  
+
+正文仍可选中局部文字后用 `Ctrl+C` 复制。
+
+---
+
+## 👨‍💻 参与开发
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-仅预览前端（浏览器，无置顶/系统剪贴板能力）：
+环境：Node.js 18+、Rust stable、Windows + MSVC Build Tools。  
+打包：`npm run tauri build`。更多说明见 [`docs/requirement.md`](docs/requirement.md)。
 
-```bash
-npm run dev
-```
+---
 
-打包（NSIS 安装包）：
+## 📄 License
 
-```bash
-npm run tauri build
-```
-
-## GitHub Release（自动构建）
-
-仓库已配置手动触发的 Actions：`.github/workflows/release.yml`。
-
-1. 推送代码到 GitHub
-2. 打开仓库 **Actions** → **Release** → **Run workflow**
-3. 可选勾选 draft / prerelease，然后运行
-4. 构建完成后会创建 `v{version}` Release，并附带 Windows NSIS 安装包
-
-版本号来自 `src-tauri/tauri.conf.json` 的 `version`。若报权限错误，到仓库 **Settings → Actions → General → Workflow permissions** 勾选 **Read and write permissions**。
-
-## 项目结构
-
-```
-PinBoard/
-├── docs/requirement.md      # 需求文档
-├── src/                     # 前端
-│   ├── main.ts
-│   ├── storage.ts
-│   ├── types.ts
-│   └── styles.css
-└── src-tauri/               # Tauri / Rust
-    ├── src/lib.rs           # 数据读写、复制、窗口配置
-    └── tauri.conf.json
-```
+[MIT](LICENSE) © jiangchunyu
