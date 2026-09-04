@@ -3,6 +3,7 @@ name = "pinboard"
 version = "0.1.0"
 description = "PinBoard - desktop pinned text clipboard helper"
 authors = ["PinBoard"]
+license = "MIT"
 edition = "2021"
 
 [lib]
