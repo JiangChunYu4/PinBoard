@@ -35,6 +35,37 @@ export async function applyWindowConfig(config: WindowConfig): Promise<void> {
   await invoke("apply_window_config", { config });
 }
 
+export async function setLaunchOnStartup(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("set_launch_on_startup", { enabled });
+}
+
+export interface DataPathInfo {
+  path: string;
+  isDefault: boolean;
+}
+
+export async function getDataPathInfo(): Promise<DataPathInfo> {
+  if (!isTauri()) {
+    return { path: "浏览器本地存储", isDefault: true };
+  }
+  return invoke<DataPathInfo>("get_data_path_info");
+}
+
+export async function chooseDataFilePath(data: AppData): Promise<DataPathInfo> {
+  if (!isTauri()) {
+    throw new Error("浏览器预览不支持更改路径");
+  }
+  return invoke<DataPathInfo>("choose_data_file_path", { data });
+}
+
+export async function resetDataFilePath(data: AppData): Promise<DataPathInfo> {
+  if (!isTauri()) {
+    return { path: "浏览器本地存储", isDefault: true };
+  }
+  return invoke<DataPathInfo>("reset_data_file_path", { data });
+}
+
 export async function saveBlocks(blocks: Block[], window: WindowConfig): Promise<void> {
   await saveData({ blocks, window });
 }

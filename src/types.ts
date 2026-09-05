@@ -11,6 +11,8 @@ export interface WindowConfig {
   height: number;
   opacity: number;
   alwaysOnTop: boolean;
+  /** Windows 开机自动启动 */
+  launchOnStartup: boolean;
 }
 
 export interface AppData {
@@ -48,6 +50,7 @@ export const DEFAULT_DATA: AppData = {
     height: 520,
     opacity: 0.96,
     alwaysOnTop: true,
+    launchOnStartup: false,
   },
 };
 
