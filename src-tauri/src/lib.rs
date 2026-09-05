@@ -132,6 +132,99 @@ fn apply_window_config(app: AppHandle, config: WindowConfig) -> Result<(), Strin
     Ok(())
 }
 
+fn toggle_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let minimized = window.is_minimized().unwrap_or(false);
+    if visible && !minimized {
+        let _ = window.hide();
+    } else {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// 6.1 全局快捷键 Ctrl+Shift+P 显示/隐藏（Win32 RegisterHotKey，无额外 crate）
+#[cfg(windows)]
+fn start_toggle_hotkey(app: AppHandle) {
+    std::thread::spawn(move || {
+        const MOD_CONTROL: u32 = 0x0002;
+        const MOD_SHIFT: u32 = 0x0004;
+        const MOD_NOREPEAT: u32 = 0x4000;
+        const VK_P: u32 = 0x50;
+        const WM_HOTKEY: u32 = 0x0312;
+        const HOTKEY_ID: i32 = 0x5042; // 'PB'
+
+        #[repr(C)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        #[repr(C)]
+        struct Msg {
+            hwnd: *mut core::ffi::c_void,
+            message: u32,
+            w_param: usize,
+            l_param: isize,
+            time: u32,
+            pt: Point,
+        }
+
+        #[link(name = "user32")]
+        extern "system" {
+            fn RegisterHotKey(
+                hwnd: *mut core::ffi::c_void,
+                id: i32,
+                fs_modifiers: u32,
+                vk: u32,
+            ) -> i32;
+            fn UnregisterHotKey(hwnd: *mut core::ffi::c_void, id: i32) -> i32;
+            fn GetMessageW(
+                msg: *mut Msg,
+                hwnd: *mut core::ffi::c_void,
+                min: u32,
+                max: u32,
+            ) -> i32;
+            fn TranslateMessage(msg: *const Msg) -> i32;
+            fn DispatchMessageW(msg: *const Msg) -> isize;
+        }
+
+        unsafe {
+            let ok = RegisterHotKey(
+                std::ptr::null_mut(),
+                HOTKEY_ID,
+                MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+                VK_P,
+            );
+            if ok == 0 {
+                eprintln!("PinBoard: Ctrl+Shift+P 注册失败（可能已被占用）");
+                return;
+            }
+
+            let mut msg: Msg = std::mem::zeroed();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                if msg.message == WM_HOTKEY && msg.w_param == HOTKEY_ID as usize {
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        toggle_main_window(&handle);
+                    });
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+
+            UnregisterHotKey(std::ptr::null_mut(), HOTKEY_ID);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn start_toggle_hotkey(_app: AppHandle) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -155,6 +248,9 @@ pub fn run() {
                 let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
                 let _ = window.set_always_on_top(data.window.always_on_top);
             }
+
+            start_toggle_hotkey(app.handle().clone());
+
             Ok(())
         })
         .run(tauri::generate_context!())
