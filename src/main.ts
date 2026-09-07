@@ -25,6 +25,7 @@ const app = document.querySelector("#app")!;
 
 let data: AppData = structuredClone(DEFAULT_DATA);
 let editingId: string | null = null;
+let expandedId: string | null = null;
 let currentView: "main" | "settings" = "main";
 let dataPathInfo: DataPathInfo = { path: "", isDefault: true };
 let toastTimer: number | undefined;
@@ -34,6 +35,10 @@ let copyClickTimer: number | undefined;
 
 const DRAG_THRESHOLD = 6;
 const COPY_CLICK_DELAY = 280;
+
+/** 与 ✎ 同重量的线框图标，避免 Unicode 全屏符在部分字体里变形 */
+const ICON_EXPAND = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_COLLAPSE = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function showToast(message: string) {
   const toast = document.querySelector<HTMLElement>(".toast");
@@ -61,7 +66,7 @@ function moveBlock(from: number, to: number) {
   }
   const [item] = data.blocks.splice(from, 1);
   data.blocks.splice(to, 0, item);
-  void persist().then(render);
+  void persist().then(() => render());
 }
 
 function clearDragStyles() {
@@ -236,6 +241,17 @@ function renderSettings(): string {
 }
 
 function renderMain(): string {
+  const expandedIndex = expandedId ? data.blocks.findIndex((b) => b.id === expandedId) : -1;
+  const expanded = expandedIndex >= 0 ? data.blocks[expandedIndex] : null;
+
+  if (expanded) {
+    return `
+      <div class="blocks is-expanded">
+        ${renderBlock(expanded, expandedIndex)}
+      </div>
+    `;
+  }
+
   return `
     <div class="toolbar">
       <button type="button" class="add-btn" id="btn-add">＋ 新增区域</button>
@@ -248,14 +264,23 @@ function renderMain(): string {
 
 function renderBlock(block: Block, index: number): string {
   const isEditing = editingId === block.id;
+  const isExpanded = expandedId === block.id;
   const lines = clampDisplayLines(block.displayLines ?? DEFAULT_DISPLAY_LINES);
+  const expandClass = isExpanded ? " is-expanded" : "";
+  // 放大态忽略行数限制，铺满可视区并滚动查看全文
+  const showClamp = !isExpanded && lines > 0;
 
   if (isEditing) {
     return `
-      <article class="block editing" data-id="${block.id}" data-index="${index}">
+      <article class="block editing${expandClass}" data-id="${block.id}" data-index="${index}">
         <div class="block-head">
           <input class="title-input" data-field="title" value="${escapeAttr(block.title)}" placeholder="区域名称" />
           <div class="block-tools">
+            ${
+              isExpanded
+                ? `<button type="button" class="icon-btn" data-action="expand" title="退出放大">${ICON_COLLAPSE}</button>`
+                : ""
+            }
             <button type="button" class="icon-btn" data-action="save" title="保存">✓</button>
             <button type="button" class="icon-btn danger" data-action="delete" title="删除">🗑</button>
           </div>
@@ -282,22 +307,25 @@ function renderBlock(block: Block, index: number): string {
   }
 
   return `
-    <article class="block" data-id="${block.id}" data-index="${index}">
+    <article class="block${expandClass}" data-id="${block.id}" data-index="${index}">
       <div class="block-head">
         <button type="button" class="block-title" data-action="copy" aria-label="复制${block.title ? `「${escapeAttr(block.title)}」` : "内容"}">
           <span class="block-title-text">${block.title ? escapeHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
           <span class="copy-pop" role="tooltip">复制</span>
         </button>
         <div class="block-tools">
+          <button type="button" class="icon-btn" data-action="expand" title="${isExpanded ? "退出放大" : "放大铺满"}">${isExpanded ? ICON_COLLAPSE : ICON_EXPAND}</button>
           <button type="button" class="icon-btn" data-action="edit" title="编辑">✎</button>
         </div>
       </div>
-      <pre class="block-content${lines > 0 ? " is-clamped" : ""}"${lines > 0 ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">双击区域或点 ✎ 编辑；拖动标题可排序</span>'}</pre>
+      <pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">双击区域或点 ✎ 编辑；拖动标题可排序</span>'}</pre>
     </article>
   `;
 }
 
-function render() {
+function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string | null } = {}) {
+  const prevScroll = document.querySelector<HTMLElement>(".blocks")?.scrollTop ?? 0;
+
   app.innerHTML = `
     <div class="shell">
       ${renderTitlebar()}
@@ -310,12 +338,32 @@ function render() {
 
   applyPanelOpacity(data.window.opacity);
   bindEvents();
+
+  const blocksEl = document.querySelector<HTMLElement>(".blocks");
+  if (!blocksEl) return;
+
+  if (options.scrollBlocksToTop) {
+    blocksEl.scrollTop = 0;
+    return;
+  }
+
+  blocksEl.scrollTop = prevScroll;
+  const focusId = options.ensureVisibleId ?? editingId;
+  if (focusId) {
+    // nearest：已在可视区则不滚动；仅当编辑态变高被裁切时微调
+    blocksEl
+      .querySelector<HTMLElement>(`.block[data-id="${CSS.escape(focusId)}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 }
 
 function bindWindowChrome() {
   document.querySelector("#btn-settings")?.addEventListener("click", () => {
     currentView = currentView === "settings" ? "main" : "settings";
-    if (currentView === "settings") editingId = null;
+    if (currentView === "settings") {
+      editingId = null;
+      expandedId = null;
+    }
     render();
   });
 
@@ -402,8 +450,7 @@ function bindEvents() {
     data.blocks.unshift(block);
     editingId = block.id;
     await persist();
-    render();
-    document.querySelector(".blocks")?.scrollTo({ top: 0 });
+    render({ scrollBlocksToTop: true });
   });
 
   document.querySelectorAll<HTMLElement>(".block").forEach((el) => {
@@ -440,10 +487,16 @@ function bindEvents() {
       }, COPY_CLICK_DELAY);
     });
 
+    el.querySelector('[data-action="expand"]')?.addEventListener("click", () => {
+      window.clearTimeout(copyClickTimer);
+      expandedId = expandedId === id ? null : id;
+      render();
+    });
+
     el.querySelector('[data-action="edit"]')?.addEventListener("click", () => {
       window.clearTimeout(copyClickTimer);
       editingId = id;
-      render();
+      render({ ensureVisibleId: id });
     });
 
     el.addEventListener("dblclick", (e) => {
@@ -455,7 +508,7 @@ function bindEvents() {
       e.preventDefault();
       window.clearTimeout(copyClickTimer);
       editingId = id;
-      render();
+      render({ ensureVisibleId: id });
     });
 
     el.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
@@ -476,13 +529,14 @@ function bindEvents() {
     el.querySelector('[data-action="delete"]')?.addEventListener("click", async () => {
       data.blocks = data.blocks.filter((b) => b.id !== id);
       editingId = null;
+      if (expandedId === id) expandedId = null;
       await persist();
       render();
       showToast("已删除");
     });
 
     el.addEventListener("pointerdown", (e) => {
-      if (editingId || e.button !== 0 || el.classList.contains("editing")) return;
+      if (editingId || expandedId || e.button !== 0 || el.classList.contains("editing")) return;
       const target = e.target as HTMLElement;
       // 正文保留选字；编辑按钮/输入框不启动拖拽
       if (
@@ -499,7 +553,7 @@ function bindEvents() {
     // 从标题拖动能排序；短按仍复制（超过阈值后会 suppressNextClick）
     el.querySelector(".block-title")?.addEventListener("pointerdown", (e) => {
       const pe = e as PointerEvent;
-      if (editingId || pe.button !== 0 || el.classList.contains("editing")) return;
+      if (editingId || expandedId || pe.button !== 0 || el.classList.contains("editing")) return;
       startBlockReorder(el, index, pe);
     });
   });

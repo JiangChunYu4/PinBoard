@@ -342,6 +342,52 @@ body {
   scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
 
+.blocks.is-expanded {
+  overflow: hidden;
+  gap: 0;
+}
+
+.blocks.is-expanded .block.is-expanded {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+}
+
+.blocks.is-expanded .block.is-expanded:active {
+  cursor: default;
+}
+
+.blocks.is-expanded .block.is-expanded .block-content {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+
+.blocks.is-expanded .block.is-expanded .block-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.blocks.is-expanded .block.is-expanded .block-content::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
+}
+
+.blocks.is-expanded .block.is-expanded .content-input {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+}
+
+.blocks.is-expanded .block.is-expanded .block-settings,
+.blocks.is-expanded .block.is-expanded .edit-hint {
+  flex-shrink: 0;
+}
+
 .blocks::-webkit-scrollbar {
   width: 6px;
 }
@@ -471,7 +517,7 @@ body.is-reordering .block:not(.dragging) {
   position: relative;
   display: inline-flex;
   align-items: center;
-  max-width: calc(100% - 72px);
+  max-width: calc(100% - 80px);
   margin: 0;
   padding: 2px 4px 2px 0;
   border: none;
@@ -542,6 +588,9 @@ body.is-reordering .block:not(.dragging) {
 }
 
 .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   cursor: pointer;
   width: 28px;
@@ -549,6 +598,15 @@ body.is-reordering .block:not(.dragging) {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.icon-btn .icon-svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover {
