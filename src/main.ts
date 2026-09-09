@@ -17,6 +17,7 @@ import {
   loadData,
   resetDataFilePath,
   saveBlocks,
+  setClickThroughPaused,
   setLaunchOnStartup,
   type DataPathInfo,
 } from "./storage";
@@ -222,6 +223,18 @@ function renderSettings(): string {
             </span>
           </div>
         </label>
+        <label class="setting-row setting-row-clickable" for="click-through-toggle">
+          <div class="setting-meta">
+            <span class="setting-name">鼠标穿透</span>
+            <span class="setting-desc">主界面内容区点击穿透；设置页内仍可正常操作</span>
+          </div>
+          <div class="setting-control">
+            <span class="switch">
+              <input type="checkbox" id="click-through-toggle" ${data.window.clickThrough ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+            </span>
+          </div>
+        </label>
         <div class="setting-row setting-row-stack">
           <div class="setting-meta">
             <span class="setting-name">数据文件路径</span>
@@ -364,6 +377,7 @@ function bindWindowChrome() {
       editingId = null;
       expandedId = null;
     }
+    void setClickThroughPaused(currentView === "settings");
     render();
   });
 
@@ -409,6 +423,22 @@ function bindSettingsEvents() {
       (e.target as HTMLInputElement).checked = previous;
       console.error(err);
       showToast("开机启动设置失败");
+    }
+  });
+
+  document.querySelector("#click-through-toggle")?.addEventListener("change", async (e) => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    const previous = data.window.clickThrough;
+    data.window.clickThrough = enabled;
+    try {
+      await applyWindowConfig(data.window);
+      await persist();
+      showToast(enabled ? "已开启鼠标穿透" : "已关闭鼠标穿透");
+    } catch (err) {
+      data.window.clickThrough = previous;
+      (e.target as HTMLInputElement).checked = previous;
+      console.error(err);
+      showToast("鼠标穿透设置失败");
     }
   });
 
@@ -605,6 +635,7 @@ async function boot() {
     data.window.height = Math.max(360, data.window.height || 520);
     data.window.opacity = Math.min(1, Math.max(0.4, data.window.opacity || 0.96));
     data.window.launchOnStartup = Boolean(data.window.launchOnStartup);
+    data.window.clickThrough = Boolean(data.window.clickThrough);
     try {
       dataPathInfo = await getDataPathInfo();
     } catch {

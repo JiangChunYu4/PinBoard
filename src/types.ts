@@ -13,6 +13,8 @@ export interface WindowConfig {
   alwaysOnTop: boolean;
   /** Windows 开机自动启动 */
   launchOnStartup: boolean;
+  /** 鼠标穿透：内容区点击落到下层窗口；标题栏仍可操作 */
+  clickThrough: boolean;
 }
 
 export interface AppData {
@@ -51,6 +53,7 @@ export const DEFAULT_DATA: AppData = {
     opacity: 0.96,
     alwaysOnTop: true,
     launchOnStartup: false,
+    clickThrough: false,
   },
 };
 

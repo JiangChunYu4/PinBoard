@@ -40,6 +40,12 @@ export async function setLaunchOnStartup(enabled: boolean): Promise<void> {
   await invoke("set_launch_on_startup", { enabled });
 }
 
+/** 设置页打开时暂停穿透，离开后恢复（不改偏好） */
+export async function setClickThroughPaused(paused: boolean): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("set_click_through_paused", { paused });
+}
+
 export interface DataPathInfo {
   path: string;
   isDefault: boolean;

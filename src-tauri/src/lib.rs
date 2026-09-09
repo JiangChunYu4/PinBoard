@@ -28,6 +28,9 @@ pub struct WindowConfig {
     pub always_on_top: bool,
     #[serde(default)]
     pub launch_on_startup: bool,
+    /// 鼠标穿透：点击落到下层窗口；标题栏仍可交互以便关闭
+    #[serde(default)]
+    pub click_through: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +68,7 @@ impl Default for AppData {
                 opacity: 0.96,
                 always_on_top: true,
                 launch_on_startup: false,
+                click_through: false,
             },
         }
     }
@@ -72,6 +76,9 @@ impl Default for AppData {
 
 struct AppState {
     data_path: Mutex<PathBuf>,
+    click_through: Mutex<bool>,
+    /// 设置页等需要整窗可点时暂停穿透（不改动已保存偏好）
+    click_through_paused: Mutex<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -360,8 +367,123 @@ fn apply_window_config(app: AppHandle, config: WindowConfig) -> Result<(), Strin
     let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
     let _ = window.set_always_on_top(config.always_on_top);
     let _ = config.opacity;
+
+    {
+        let state = app.state::<AppState>();
+        *state
+            .click_through
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = config.click_through;
+        let paused = *state
+            .click_through_paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // 穿透开启时标题栏命中检测线程会按光标位置微调；设置页暂停时整窗可点
+        let _ = window.set_ignore_cursor_events(config.click_through && !paused);
+    }
     Ok(())
 }
+
+/// 临时暂停鼠标穿透（设置页打开时），不修改已保存的 clickThrough 偏好
+#[tauri::command]
+fn set_click_through_paused(app: AppHandle, paused: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    *state
+        .click_through_paused
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = paused;
+
+    let enabled = *state
+        .click_through
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_ignore_cursor_events(enabled && !paused);
+    }
+    Ok(())
+}
+
+/// 与前端 `.titlebar` 高度一致（逻辑像素）
+const TITLEBAR_HIT_HEIGHT_LOGICAL: f64 = 42.0;
+
+/// 鼠标穿透开启时：光标在标题栏则接收事件，否则穿透到下层窗口
+#[cfg(windows)]
+fn start_click_through_tracker(app: AppHandle) {
+    std::thread::spawn(move || {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetCursorPos(point: *mut Point) -> i32;
+        }
+
+        #[repr(C)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        let mut last_ignore: Option<bool> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(32));
+
+            let (enabled, paused) = {
+                let state = app.state::<AppState>();
+                let enabled = *state
+                    .click_through
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let paused = *state
+                    .click_through_paused
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                (enabled, paused)
+            };
+
+            let should_ignore = if !enabled || paused {
+                false
+            } else {
+                let Some(window) = app.get_webview_window("main") else {
+                    continue;
+                };
+                let Ok(pos) = window.outer_position() else {
+                    continue;
+                };
+                let Ok(size) = window.outer_size() else {
+                    continue;
+                };
+                let scale = window.scale_factor().unwrap_or(1.0);
+                let titlebar_h = (TITLEBAR_HIT_HEIGHT_LOGICAL * scale).round().max(1.0) as i32;
+
+                let mut pt = Point { x: 0, y: 0 };
+                let ok = unsafe { GetCursorPos(&mut pt) };
+                if ok == 0 {
+                    continue;
+                }
+
+                let over_titlebar = pt.x >= pos.x
+                    && pt.x < pos.x + size.width as i32
+                    && pt.y >= pos.y
+                    && pt.y < pos.y + titlebar_h;
+                !over_titlebar
+            };
+
+            if last_ignore == Some(should_ignore) {
+                continue;
+            }
+            last_ignore = Some(should_ignore);
+
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.set_ignore_cursor_events(should_ignore);
+                }
+            });
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn start_click_through_tracker(_app: AppHandle) {}
 
 #[tauri::command]
 fn set_launch_on_startup(enabled: bool) -> Result<(), String> {
@@ -570,12 +692,15 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState {
             data_path: Mutex::new(PathBuf::new()),
+            click_through: Mutex::new(false),
+            click_through_paused: Mutex::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             load_data,
             save_data,
             copy_text,
             apply_window_config,
+            set_click_through_paused,
             set_launch_on_startup,
             get_data_path_info,
             choose_data_file_path,
@@ -590,6 +715,15 @@ pub fn run() {
                 let height = data.window.height.max(360.0);
                 let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
                 let _ = window.set_always_on_top(data.window.always_on_top);
+                let _ = window.set_ignore_cursor_events(data.window.click_through);
+            }
+
+            {
+                let state = app.state::<AppState>();
+                *state
+                    .click_through
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = data.window.click_through;
             }
 
             // 启动时按已保存偏好同步注册表（安装路径变更后也能纠正）
@@ -597,6 +731,7 @@ pub fn run() {
                 eprintln!("PinBoard: 同步开机启动失败: {err}");
             }
 
+            start_click_through_tracker(app.handle().clone());
             start_toggle_hotkey(app.handle().clone());
 
             Ok(())
