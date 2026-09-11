@@ -1,6 +1,6 @@
 [package]
 name = "pinboard"
-version = "0.2.2"
+version = "0.3.0"
 description = "PinBoard - desktop pinned text clipboard helper"
 authors = ["PinBoard"]
 license = "MIT"
