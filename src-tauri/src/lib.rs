@@ -31,6 +31,9 @@ pub struct WindowConfig {
     /// 鼠标穿透：点击落到下层窗口；标题栏仍可交互以便关闭
     #[serde(default)]
     pub click_through: bool,
+    /// 新建区域时的默认显示行数；0 表示显示全部
+    #[serde(default = "default_display_lines")]
+    pub default_display_lines: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +72,7 @@ impl Default for AppData {
                 always_on_top: true,
                 launch_on_startup: false,
                 click_through: false,
+                default_display_lines: 0,
             },
         }
     }

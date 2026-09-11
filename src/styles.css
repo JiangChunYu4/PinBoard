@@ -302,13 +302,16 @@ body {
 }
 
 .setting-btn {
+  box-sizing: border-box;
+  height: 30px;
   border: 1px solid rgba(61, 156, 240, 0.35);
   background: rgba(61, 156, 240, 0.12);
   color: #b9dcff;
   border-radius: 8px;
-  padding: 6px 10px;
+  padding: 0 10px;
   cursor: pointer;
   font-size: 12px;
+  line-height: 1;
 }
 
 .setting-btn:hover:not(:disabled) {
@@ -329,6 +332,28 @@ body {
 .setting-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.setting-btn.icon {
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setting-btn.icon .icon-svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.setting-control .lines-input {
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
 }
 
 .blocks {
@@ -517,7 +542,7 @@ body.is-reordering .block:not(.dragging) {
   position: relative;
   display: inline-flex;
   align-items: center;
-  max-width: calc(100% - 80px);
+  max-width: calc(100% - 108px);
   margin: 0;
   padding: 2px 4px 2px 0;
   border: none;

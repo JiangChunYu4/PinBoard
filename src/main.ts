@@ -27,6 +27,8 @@ const app = document.querySelector("#app")!;
 let data: AppData = structuredClone(DEFAULT_DATA);
 let editingId: string | null = null;
 let expandedId: string | null = null;
+/** 临时撑开（按 0 行显示）的区域 id，不写入持久化 */
+const unfoldedIds = new Set<string>();
 let currentView: "main" | "settings" = "main";
 let dataPathInfo: DataPathInfo = { path: "", isDefault: true };
 let toastTimer: number | undefined;
@@ -40,6 +42,11 @@ const COPY_CLICK_DELAY = 280;
 /** 与 ✎ 同重量的线框图标，避免 Unicode 全屏符在部分字体里变形 */
 const ICON_EXPAND = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ICON_COLLAPSE = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** 临时撑开 / 折叠行数限制 */
+const ICON_UNFOLD = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5h10M8 5.5v7M5 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_FOLD = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5h10M8 10.5V3.5M5 6l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** 覆盖应用到全部区域 */
+const ICON_APPLY_ALL = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M11 2.5l1.8 1.8L15.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 function showToast(message: string) {
   const toast = document.querySelector<HTMLElement>(".toast");
@@ -235,6 +242,26 @@ function renderSettings(): string {
             </span>
           </div>
         </label>
+        <div class="setting-row">
+          <div class="setting-meta">
+            <span class="setting-name">默认显示行数</span>
+            <span class="setting-desc">新建区域初始行数；可一键覆盖到全部已有区域</span>
+          </div>
+          <div class="setting-control">
+            <input
+              type="number"
+              class="lines-input"
+              id="default-lines-input"
+              min="${MIN_DISPLAY_LINES}"
+              max="${MAX_DISPLAY_LINES}"
+              value="${clampDisplayLines(data.window.defaultDisplayLines ?? DEFAULT_DISPLAY_LINES)}"
+              title="0 表示显示全部"
+              aria-label="默认显示行数"
+            />
+            <span class="setting-value lines-hint">0=全部</span>
+            <button type="button" class="setting-btn icon" id="btn-apply-default-lines" title="应用到全部已有区域" aria-label="应用到全部">${ICON_APPLY_ALL}</button>
+          </div>
+        </div>
         <div class="setting-row setting-row-stack">
           <div class="setting-meta">
             <span class="setting-name">数据文件路径</span>
@@ -279,9 +306,11 @@ function renderBlock(block: Block, index: number): string {
   const isEditing = editingId === block.id;
   const isExpanded = expandedId === block.id;
   const lines = clampDisplayLines(block.displayLines ?? DEFAULT_DISPLAY_LINES);
+  const isUnfolded = unfoldedIds.has(block.id);
   const expandClass = isExpanded ? " is-expanded" : "";
-  // 放大态忽略行数限制，铺满可视区并滚动查看全文
-  const showClamp = !isExpanded && lines > 0;
+  // 放大态 / 临时撑开：忽略行数限制；折叠恢复后仍用已保存 displayLines
+  const showClamp = !isExpanded && !isUnfolded && lines > 0;
+  const canToggleFold = !isExpanded && (lines > 0 || isUnfolded);
 
   if (isEditing) {
     return `
@@ -327,6 +356,11 @@ function renderBlock(block: Block, index: number): string {
           <span class="copy-pop" role="tooltip">复制</span>
         </button>
         <div class="block-tools">
+          ${
+            canToggleFold
+              ? `<button type="button" class="icon-btn" data-action="fold" title="${isUnfolded ? "折叠行数" : "临时撑开"}" aria-label="${isUnfolded ? "折叠行数" : "临时撑开"}" aria-pressed="${isUnfolded}">${isUnfolded ? ICON_FOLD : ICON_UNFOLD}</button>`
+              : ""
+          }
           <button type="button" class="icon-btn" data-action="expand" title="${isExpanded ? "退出放大" : "放大铺满"}">${isExpanded ? ICON_COLLAPSE : ICON_EXPAND}</button>
           <button type="button" class="icon-btn" data-action="edit" title="编辑">✎</button>
         </div>
@@ -376,6 +410,7 @@ function bindWindowChrome() {
     if (currentView === "settings") {
       editingId = null;
       expandedId = null;
+      unfoldedIds.clear();
     }
     void setClickThroughPaused(currentView === "settings");
     render();
@@ -442,6 +477,35 @@ function bindSettingsEvents() {
     }
   });
 
+  document.querySelector("#default-lines-input")?.addEventListener("change", async (e) => {
+    const input = e.target as HTMLInputElement;
+    const value = clampDisplayLines(Number(input.value));
+    input.value = String(value);
+    data.window.defaultDisplayLines = value;
+    await persist();
+    showToast(value === 0 ? "新建区域将显示全部" : `新建区域默认 ${value} 行`);
+  });
+
+  document.querySelector("#btn-apply-default-lines")?.addEventListener("click", async () => {
+    const input = document.querySelector<HTMLInputElement>("#default-lines-input");
+    const value = clampDisplayLines(Number(input?.value ?? data.window.defaultDisplayLines));
+    if (input) input.value = String(value);
+    data.window.defaultDisplayLines = value;
+    data.blocks = data.blocks.map((block) => ({
+      ...block,
+      displayLines: value,
+    }));
+    unfoldedIds.clear();
+    await persist();
+    showToast(
+      data.blocks.length === 0
+        ? "已保存默认行数"
+        : value === 0
+          ? `已覆盖 ${data.blocks.length} 个区域为全部显示`
+          : `已覆盖 ${data.blocks.length} 个区域为 ${value} 行`,
+    );
+  });
+
   document.querySelector("#btn-data-path-change")?.addEventListener("click", async () => {
     try {
       dataPathInfo = await chooseDataFilePath(data);
@@ -476,7 +540,7 @@ function bindEvents() {
   }
 
   document.querySelector("#btn-add")?.addEventListener("click", async () => {
-    const block = createBlock();
+    const block = createBlock("", "", data.window.defaultDisplayLines);
     data.blocks.unshift(block);
     editingId = block.id;
     await persist();
@@ -517,6 +581,13 @@ function bindEvents() {
       }, COPY_CLICK_DELAY);
     });
 
+    el.querySelector('[data-action="fold"]')?.addEventListener("click", () => {
+      window.clearTimeout(copyClickTimer);
+      if (unfoldedIds.has(id)) unfoldedIds.delete(id);
+      else unfoldedIds.add(id);
+      render({ ensureVisibleId: id });
+    });
+
     el.querySelector('[data-action="expand"]')?.addEventListener("click", () => {
       window.clearTimeout(copyClickTimer);
       expandedId = expandedId === id ? null : id;
@@ -550,6 +621,7 @@ function bindEvents() {
       block.title = title;
       block.content = content;
       block.displayLines = clampDisplayLines(linesRaw);
+      unfoldedIds.delete(id);
       editingId = null;
       await persist();
       render();
@@ -560,6 +632,7 @@ function bindEvents() {
       data.blocks = data.blocks.filter((b) => b.id !== id);
       editingId = null;
       if (expandedId === id) expandedId = null;
+      unfoldedIds.delete(id);
       await persist();
       render();
       showToast("已删除");
@@ -636,6 +709,9 @@ async function boot() {
     data.window.opacity = Math.min(1, Math.max(0.4, data.window.opacity || 0.96));
     data.window.launchOnStartup = Boolean(data.window.launchOnStartup);
     data.window.clickThrough = Boolean(data.window.clickThrough);
+    data.window.defaultDisplayLines = clampDisplayLines(
+      data.window.defaultDisplayLines ?? DEFAULT_DISPLAY_LINES,
+    );
     try {
       dataPathInfo = await getDataPathInfo();
     } catch {

@@ -15,6 +15,8 @@ export interface WindowConfig {
   launchOnStartup: boolean;
   /** 鼠标穿透：内容区点击落到下层窗口；标题栏仍可操作 */
   clickThrough: boolean;
+  /** 新建区域时的默认显示行数；0 表示显示全部 */
+  defaultDisplayLines: number;
 }
 
 export interface AppData {
@@ -54,6 +56,7 @@ export const DEFAULT_DATA: AppData = {
     alwaysOnTop: true,
     launchOnStartup: false,
     clickThrough: false,
+    defaultDisplayLines: DEFAULT_DISPLAY_LINES,
   },
 };
 
