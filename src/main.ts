@@ -343,7 +343,6 @@ function renderBlock(block: Block, index: number): string {
             <span class="lines-hint">0=全部</span>
           </label>
         </div>
-        <div class="edit-hint">编辑完成后点击 ✓ 保存</div>
       </article>
     `;
   }
@@ -385,6 +384,7 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
 
   applyPanelOpacity(data.window.opacity);
   bindEvents();
+  markTruncatedBlocks();
 
   const blocksEl = document.querySelector<HTMLElement>(".blocks");
   if (!blocksEl) return;
@@ -402,6 +402,13 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
       .querySelector<HTMLElement>(`.block[data-id="${CSS.escape(focusId)}"]`)
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
+}
+
+/** 限行裁切且内容溢出时标记，用于底部淡出提示 */
+function markTruncatedBlocks() {
+  document.querySelectorAll<HTMLElement>(".block-content.is-clamped").forEach((el) => {
+    el.classList.toggle("is-truncated", el.scrollHeight > el.clientHeight + 1);
+  });
 }
 
 function bindWindowChrome() {

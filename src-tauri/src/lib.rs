@@ -19,6 +19,10 @@ fn default_display_lines() -> u32 {
     0
 }
 
+fn default_new_block_display_lines() -> u32 {
+    4
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowConfig {
@@ -32,7 +36,7 @@ pub struct WindowConfig {
     #[serde(default)]
     pub click_through: bool,
     /// 新建区域时的默认显示行数；0 表示显示全部
-    #[serde(default = "default_display_lines")]
+    #[serde(default = "default_new_block_display_lines")]
     pub default_display_lines: u32,
 }
 
@@ -50,19 +54,19 @@ impl Default for AppData {
                     id: "block-git".into(),
                     title: "Git".into(),
                     content: "git pull origin main".into(),
-                    display_lines: 0,
+                    display_lines: 4,
                 },
                 Block {
                     id: "block-docker".into(),
                     title: "Docker".into(),
                     content: "docker compose up -d".into(),
-                    display_lines: 0,
+                    display_lines: 4,
                 },
                 Block {
                     id: "block-ssh".into(),
                     title: "SSH".into(),
                     content: "ssh user@server".into(),
-                    display_lines: 0,
+                    display_lines: 4,
                 },
             ],
             window: WindowConfig {
@@ -72,7 +76,7 @@ impl Default for AppData {
                 always_on_top: true,
                 launch_on_startup: false,
                 click_through: false,
-                default_display_lines: 0,
+                default_display_lines: 4,
             },
         }
     }

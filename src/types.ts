@@ -24,7 +24,7 @@ export interface AppData {
   window: WindowConfig;
 }
 
-export const DEFAULT_DISPLAY_LINES = 0;
+export const DEFAULT_DISPLAY_LINES = 4;
 export const MIN_DISPLAY_LINES = 0;
 export const MAX_DISPLAY_LINES = 30;
 

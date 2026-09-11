@@ -408,8 +408,7 @@ body {
   resize: none;
 }
 
-.blocks.is-expanded .block.is-expanded .block-settings,
-.blocks.is-expanded .block.is-expanded .edit-hint {
+.blocks.is-expanded .block.is-expanded .block-settings {
   flex-shrink: 0;
 }
 
@@ -659,24 +658,25 @@ body.is-reordering .block:not(.dragging) {
 }
 
 .block-content.is-clamped {
+  position: relative;
   max-height: calc(1.55em * var(--display-lines, 4));
-  overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+  overflow: hidden;
 }
 
-.block-content.is-clamped::-webkit-scrollbar {
-  width: 6px;
+/* 仅真实截断时显示，避免短内容误以为还有下文 */
+.block-content.is-clamped.is-truncated::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.55em;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-block));
 }
 
-.block-content.is-clamped::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.32);
-  border-radius: 999px;
-}
-
-.block-content.is-clamped::-webkit-scrollbar-thumb:hover {
-  background: rgba(61, 156, 240, 0.55);
+.block:hover .block-content.is-clamped.is-truncated::after {
+  background: linear-gradient(to bottom, transparent, var(--bg-block-hover));
 }
 
 body.is-reordering,
@@ -755,12 +755,6 @@ body.is-reordering .block-content {
 
 .content-input::-webkit-scrollbar-corner {
   background: transparent;
-}
-
-.edit-hint {
-  margin-top: 8px;
-  color: var(--text-dim);
-  font-size: 11px;
 }
 
 .block-settings {
