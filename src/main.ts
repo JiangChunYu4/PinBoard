@@ -38,6 +38,10 @@ let copyClickTimer: number | undefined;
 
 const DRAG_THRESHOLD = 6;
 const COPY_CLICK_DELAY = 280;
+const COPY_TIP_CONTENT = "复制内容";
+const COPY_TIP_TITLE = "复制标题";
+let ctrlHeld = false;
+let copyTipChromeBound = false;
 
 /** 与 ✎ 同重量的线框图标，避免 Unicode 全屏符在部分字体里变形 */
 const ICON_EXPAND = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -53,6 +57,33 @@ type TipAlign = "start" | "center" | "end";
 /** 自定义气泡提示（与区域标题「复制」同款，避免系统 title 风格不一致） */
 function uiTip(text: string, align: TipAlign = "center"): string {
   return `<span class="ui-tip tip-${align}" role="tooltip">${escapeHtml(text)}</span>`;
+}
+
+function copyTipLabel(withCtrl: boolean): string {
+  return withCtrl ? COPY_TIP_TITLE : COPY_TIP_CONTENT;
+}
+
+function syncCopyTips(withCtrl = ctrlHeld) {
+  document.querySelectorAll<HTMLElement>('[data-action="copy"] .ui-tip').forEach((tip) => {
+    if (tip.classList.contains("is-success")) return;
+    tip.textContent = copyTipLabel(withCtrl);
+  });
+}
+
+function bindCopyTipChrome() {
+  if (copyTipChromeBound) return;
+  copyTipChromeBound = true;
+
+  const refresh = (e?: KeyboardEvent) => {
+    const next = e ? e.ctrlKey : false;
+    if (ctrlHeld === next && e) return;
+    ctrlHeld = next;
+    syncCopyTips(ctrlHeld);
+  };
+
+  window.addEventListener("keydown", refresh, true);
+  window.addEventListener("keyup", refresh, true);
+  window.addEventListener("blur", () => refresh());
 }
 
 function showToast(message: string) {
@@ -342,9 +373,9 @@ function renderBlock(block: Block, index: number): string {
   return `
     <article class="block${expandClass}" data-id="${block.id}" data-index="${index}">
       <div class="block-head">
-        <button type="button" class="block-title" data-action="copy" aria-label="复制${block.title ? `「${escapeAttr(block.title)}」` : "内容"}">
+        <button type="button" class="block-title" data-action="copy" aria-label="复制内容；Ctrl+点击复制标题">
           <span class="block-title-text">${block.title ? escapeHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
-          ${uiTip("复制", "start")}
+          ${uiTip("复制内容", "start")}
         </button>
         <div class="block-tools">
           ${
@@ -376,6 +407,7 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
 
   applyPanelOpacity(data.window.opacity);
   bindEvents();
+  syncCopyTips();
   markTruncatedBlocks();
 
   const blocksEl = document.querySelector<HTMLElement>(".blocks");
@@ -617,19 +649,25 @@ function bindEvents() {
         e.stopPropagation();
         return;
       }
+      const copyTitle = (e as MouseEvent).ctrlKey;
       window.clearTimeout(copyClickTimer);
-      copyClickTimer = window.setTimeout(() => {
+
+      const runCopy = () => {
         void (async () => {
           const block = data.blocks.find((b) => b.id === id);
           if (!block) return;
+          if (copyTitle && !block.title.trim()) {
+            showToast("暂无标题");
+            return;
+          }
           try {
-            await copyText(block.content);
+            await copyText(copyTitle ? block.title : block.content);
             const tip = el.querySelector<HTMLElement>('[data-action="copy"] .ui-tip');
             if (tip) {
-              tip.textContent = "已复制";
+              tip.textContent = copyTitle ? "已复制标题" : "已复制内容";
               tip.classList.add("is-success");
               window.setTimeout(() => {
-                tip.textContent = "复制";
+                tip.textContent = copyTipLabel(ctrlHeld);
                 tip.classList.remove("is-success");
               }, 1200);
             }
@@ -637,7 +675,10 @@ function bindEvents() {
             showToast("复制失败");
           }
         })();
-      }, COPY_CLICK_DELAY);
+      };
+
+      if (copyTitle) runCopy();
+      else copyClickTimer = window.setTimeout(runCopy, COPY_CLICK_DELAY);
     });
 
     el.querySelector('[data-action="fold"]')?.addEventListener("click", () => {
@@ -792,6 +833,7 @@ async function boot() {
     console.error(err);
     data = structuredClone(DEFAULT_DATA);
   }
+  bindCopyTipChrome();
   render();
 }
 

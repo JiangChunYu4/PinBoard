@@ -161,6 +161,7 @@ body {
   gap: 8px;
   overflow: auto;
   min-height: 0;
+  padding-right: 2px;
 }
 
 .setting-row {
@@ -417,7 +418,8 @@ body {
 /* 统一自定义滚动条，并彻底去掉上下箭头按钮（WebView2） */
 .blocks::-webkit-scrollbar,
 .block-content::-webkit-scrollbar,
-.content-input::-webkit-scrollbar {
+.content-input::-webkit-scrollbar,
+.settings-list::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
@@ -425,18 +427,23 @@ body {
 .blocks::-webkit-scrollbar-button,
 .block-content::-webkit-scrollbar-button,
 .content-input::-webkit-scrollbar-button,
+.settings-list::-webkit-scrollbar-button,
 .blocks::-webkit-scrollbar-button:start:decrement,
 .blocks::-webkit-scrollbar-button:end:increment,
 .block-content::-webkit-scrollbar-button:start:decrement,
 .block-content::-webkit-scrollbar-button:end:increment,
 .content-input::-webkit-scrollbar-button:start:decrement,
 .content-input::-webkit-scrollbar-button:end:increment,
+.settings-list::-webkit-scrollbar-button:start:decrement,
+.settings-list::-webkit-scrollbar-button:end:increment,
 .blocks::-webkit-scrollbar-button:vertical:start:decrement,
 .blocks::-webkit-scrollbar-button:vertical:end:increment,
 .block-content::-webkit-scrollbar-button:vertical:start:decrement,
 .block-content::-webkit-scrollbar-button:vertical:end:increment,
 .content-input::-webkit-scrollbar-button:vertical:start:decrement,
-.content-input::-webkit-scrollbar-button:vertical:end:increment {
+.content-input::-webkit-scrollbar-button:vertical:end:increment,
+.settings-list::-webkit-scrollbar-button:vertical:start:decrement,
+.settings-list::-webkit-scrollbar-button:vertical:end:increment {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
@@ -447,17 +454,20 @@ body {
 
 .blocks::-webkit-scrollbar-track,
 .block-content::-webkit-scrollbar-track,
-.content-input::-webkit-scrollbar-track {
+.content-input::-webkit-scrollbar-track,
+.settings-list::-webkit-scrollbar-track {
   margin: 0;
   background: transparent;
 }
 
-.blocks::-webkit-scrollbar-thumb {
+.blocks::-webkit-scrollbar-thumb,
+.settings-list::-webkit-scrollbar-thumb {
   background: rgba(148, 163, 184, 0.28);
   border-radius: 999px;
 }
 
-.blocks::-webkit-scrollbar-thumb:hover {
+.blocks::-webkit-scrollbar-thumb:hover,
+.settings-list::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.45);
 }
 
