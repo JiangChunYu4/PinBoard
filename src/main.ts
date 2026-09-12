@@ -48,6 +48,13 @@ const ICON_FOLD = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true">
 /** 覆盖应用到全部区域 */
 const ICON_APPLY_ALL = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M11 2.5l1.8 1.8L15.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+type TipAlign = "start" | "center" | "end";
+
+/** 自定义气泡提示（与区域标题「复制」同款，避免系统 title 风格不一致） */
+function uiTip(text: string, align: TipAlign = "center"): string {
+  return `<span class="ui-tip tip-${align}" role="tooltip">${escapeHtml(text)}</span>`;
+}
+
 function showToast(message: string) {
   const toast = document.querySelector<HTMLElement>(".toast");
   if (!toast) return;
@@ -79,30 +86,19 @@ function moveBlock(from: number, to: number) {
 
 function clearDragStyles() {
   document.querySelectorAll(".block").forEach((b) => {
-    b.classList.remove("dragging", "drag-over", "drag-over-before", "drag-over-after");
+    b.classList.remove("dragging", "drag-over");
   });
   document.body.classList.remove("is-reordering");
   document.querySelector(".drag-ghost")?.remove();
 }
 
-function dropTargetFromPoint(
-  x: number,
-  y: number,
-  fromIndex: number,
-): { index: number; place: "before" | "after" } | null {
+/** 指针落在哪个区域上（整块命中即可，不再区分上下半区） */
+function dropTargetIndexFromPoint(x: number, y: number, fromIndex: number): number | null {
   const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".block");
   if (!el || el.dataset.index == null) return null;
   const index = Number(el.dataset.index);
-  if (index === fromIndex) return null;
-  const rect = el.getBoundingClientRect();
-  const place = y < rect.top + rect.height / 2 ? "before" : "after";
-  return { index, place };
-}
-
-function resolveDropIndex(from: number, target: { index: number; place: "before" | "after" }): number {
-  let to = target.place === "before" ? target.index : target.index + 1;
-  if (from < to) to -= 1;
-  return to;
+  if (!Number.isFinite(index) || index === fromIndex) return null;
+  return index;
 }
 
 function startBlockReorder(blockEl: HTMLElement, fromIndex: number, e: PointerEvent) {
@@ -148,12 +144,12 @@ function startBlockReorder(blockEl: HTMLElement, fromIndex: number, e: PointerEv
     }
 
     document.querySelectorAll(".block").forEach((b) => {
-      b.classList.remove("drag-over", "drag-over-before", "drag-over-after");
+      b.classList.remove("drag-over");
     });
-    const target = dropTargetFromPoint(ev.clientX, ev.clientY, fromIndex);
-    if (!target) return;
-    const overEl = document.querySelector<HTMLElement>(`.block[data-index="${target.index}"]`);
-    overEl?.classList.add("drag-over", target.place === "before" ? "drag-over-before" : "drag-over-after");
+    const targetIndex = dropTargetIndexFromPoint(ev.clientX, ev.clientY, fromIndex);
+    if (targetIndex == null) return;
+    const overEl = document.querySelector<HTMLElement>(`.block[data-index="${targetIndex}"]`);
+    overEl?.classList.add("drag-over");
   };
 
   const finish = (ev: PointerEvent) => {
@@ -166,12 +162,13 @@ function startBlockReorder(blockEl: HTMLElement, fromIndex: number, e: PointerEv
     }
 
     const from = dragFromIndex;
-    const target = active ? dropTargetFromPoint(ev.clientX, ev.clientY, fromIndex) : null;
+    const targetIndex = active ? dropTargetIndexFromPoint(ev.clientX, ev.clientY, fromIndex) : null;
     dragFromIndex = null;
     clearDragStyles();
 
-    if (active && from !== null && target) {
-      moveBlock(from, resolveDropIndex(from, target));
+    if (active && from !== null && targetIndex != null) {
+      // 落到目标区域任意位置 → 移到该区域当前下标（相邻时即交换）
+      moveBlock(from, targetIndex);
     }
 
     if (suppressNextClick) {
@@ -194,9 +191,9 @@ function renderTitlebar() {
         <span class="brand-name" data-tauri-drag-region>Board</span>
       </div>
       <div class="window-actions">
-        <button type="button" class="win-btn${currentView === "settings" ? " active" : ""}" id="btn-settings" title="设置" aria-label="设置" aria-pressed="${currentView === "settings"}">⚙</button>
-        <button type="button" class="win-btn" id="btn-minimize" title="最小化" aria-label="最小化">─</button>
-        <button type="button" class="win-btn close" id="btn-close" title="关闭" aria-label="关闭">×</button>
+        <button type="button" class="win-btn${currentView === "settings" ? " active" : ""}" id="btn-settings" aria-label="设置" aria-pressed="${currentView === "settings"}">⚙${uiTip("设置", "end")}</button>
+        <button type="button" class="win-btn" id="btn-minimize" aria-label="最小化">─${uiTip("最小化", "end")}</button>
+        <button type="button" class="win-btn close" id="btn-close" aria-label="关闭">×${uiTip("关闭", "end")}</button>
       </div>
     </header>
   `;
@@ -259,7 +256,7 @@ function renderSettings(): string {
               aria-label="默认显示行数"
             />
             <span class="setting-value lines-hint">0=全部</span>
-            <button type="button" class="setting-btn icon" id="btn-apply-default-lines" title="应用到全部已有区域" aria-label="应用到全部">${ICON_APPLY_ALL}</button>
+            <button type="button" class="setting-btn icon" id="btn-apply-default-lines" aria-label="应用到全部">${ICON_APPLY_ALL}${uiTip("应用到全部", "end")}</button>
           </div>
         </div>
         <div class="setting-row setting-row-stack">
@@ -268,7 +265,7 @@ function renderSettings(): string {
             <span class="setting-desc">区域与窗口配置保存位置；更改后会迁移当前数据</span>
           </div>
           <div class="path-box">
-            <code class="path-text" title="${escapeAttr(pathLabel)}">${escapeHtml(shortenPath(pathLabel))}</code>
+            <code class="path-text">${escapeHtml(shortenPath(pathLabel))}</code>
             <div class="path-actions">
               <button type="button" class="setting-btn" id="btn-data-path-change">更改…</button>
               <button type="button" class="setting-btn ghost" id="btn-data-path-reset" ${dataPathInfo.isDefault ? "disabled" : ""}>恢复默认</button>
@@ -318,13 +315,8 @@ function renderBlock(block: Block, index: number): string {
         <div class="block-head">
           <input class="title-input" data-field="title" value="${escapeAttr(block.title)}" placeholder="区域名称" />
           <div class="block-tools">
-            ${
-              isExpanded
-                ? `<button type="button" class="icon-btn" data-action="expand" title="退出放大">${ICON_COLLAPSE}</button>`
-                : ""
-            }
-            <button type="button" class="icon-btn" data-action="save" title="保存">✓</button>
-            <button type="button" class="icon-btn danger" data-action="delete" title="删除">🗑</button>
+            <button type="button" class="icon-btn" data-action="save" aria-label="保存">✓${uiTip("保存", "end")}</button>
+            <button type="button" class="icon-btn danger" data-action="delete" aria-label="删除">🗑${uiTip("删除", "end")}</button>
           </div>
         </div>
         <textarea class="content-input" data-field="content" rows="4" placeholder="需要快速复制的文本">${escapeHtml(block.content)}</textarea>
@@ -352,16 +344,16 @@ function renderBlock(block: Block, index: number): string {
       <div class="block-head">
         <button type="button" class="block-title" data-action="copy" aria-label="复制${block.title ? `「${escapeAttr(block.title)}」` : "内容"}">
           <span class="block-title-text">${block.title ? escapeHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
-          <span class="copy-pop" role="tooltip">复制</span>
+          ${uiTip("复制", "start")}
         </button>
         <div class="block-tools">
           ${
             canToggleFold
-              ? `<button type="button" class="icon-btn" data-action="fold" title="${isUnfolded ? "折叠行数" : "临时撑开"}" aria-label="${isUnfolded ? "折叠行数" : "临时撑开"}" aria-pressed="${isUnfolded}">${isUnfolded ? ICON_FOLD : ICON_UNFOLD}</button>`
+              ? `<button type="button" class="icon-btn" data-action="fold" aria-label="${isUnfolded ? "折叠" : "展开"}" aria-pressed="${isUnfolded}">${isUnfolded ? ICON_FOLD : ICON_UNFOLD}${uiTip(isUnfolded ? "折叠" : "展开", "end")}</button>`
               : ""
           }
-          <button type="button" class="icon-btn" data-action="expand" title="${isExpanded ? "退出放大" : "放大铺满"}">${isExpanded ? ICON_COLLAPSE : ICON_EXPAND}</button>
-          <button type="button" class="icon-btn" data-action="edit" title="编辑">✎</button>
+          <button type="button" class="icon-btn" data-action="expand" aria-label="${isExpanded ? "还原" : "放大"}">${isExpanded ? ICON_COLLAPSE : ICON_EXPAND}${uiTip(isExpanded ? "还原" : "放大", "end")}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="编辑">✎${uiTip("编辑", "end")}</button>
         </div>
       </div>
       <pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">双击区域或点 ✎ 编辑；拖动标题可排序</span>'}</pre>
@@ -411,16 +403,81 @@ function markTruncatedBlocks() {
   });
 }
 
+/** 进入编辑：铺满当前区域，便于专注修改 */
+function enterEdit(id: string, renderOpts?: { scrollBlocksToTop?: boolean; ensureVisibleId?: string | null }) {
+  editingId = id;
+  expandedId = id;
+  render(renderOpts ?? { ensureVisibleId: id });
+}
+
+/** 结束编辑：回到列表 */
+function exitEdit() {
+  editingId = null;
+  expandedId = null;
+}
+
+let tipResumeCleanup: (() => void) | null = null;
+
+/** 离开设置后若立刻恢复穿透，顶栏收不到 mouseleave，气泡会卡住且内容区点不到 */
+function resumeClickThroughAfterTitlebarLeave() {
+  tipResumeCleanup?.();
+  tipResumeCleanup = null;
+
+  if (!data.window.clickThrough) {
+    void setClickThroughPaused(false);
+    return;
+  }
+
+  // 先保持暂停，等指针离开顶栏再恢复穿透
+  void setClickThroughPaused(true);
+
+  const titlebar = document.querySelector<HTMLElement>(".titlebar");
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    window.removeEventListener("pointermove", onMove, true);
+    titlebar?.removeEventListener("pointerleave", finish);
+    tipResumeCleanup = null;
+    void setClickThroughPaused(false);
+  };
+
+  const onMove = (e: PointerEvent) => {
+    const rect = titlebar?.getBoundingClientRect();
+    if (!rect) {
+      finish();
+      return;
+    }
+    const inside =
+      e.clientX >= rect.left &&
+      e.clientX <= rect.right &&
+      e.clientY >= rect.top &&
+      e.clientY <= rect.bottom;
+    if (!inside) finish();
+  };
+
+  titlebar?.addEventListener("pointerleave", finish);
+  window.addEventListener("pointermove", onMove, true);
+  tipResumeCleanup = finish;
+}
+
 function bindWindowChrome() {
   document.querySelector("#btn-settings")?.addEventListener("click", () => {
-    currentView = currentView === "settings" ? "main" : "settings";
-    if (currentView === "settings") {
+    const enteringSettings = currentView !== "settings";
+    currentView = enteringSettings ? "settings" : "main";
+    if (enteringSettings) {
       editingId = null;
       expandedId = null;
       unfoldedIds.clear();
+      tipResumeCleanup?.();
+      tipResumeCleanup = null;
+      void setClickThroughPaused(true);
+      render();
+      return;
     }
-    void setClickThroughPaused(currentView === "settings");
+
     render();
+    resumeClickThroughAfterTitlebarLeave();
   });
 
   document.querySelector("#btn-minimize")?.addEventListener("click", async () => {
@@ -459,7 +516,6 @@ function bindSettingsEvents() {
     try {
       await setLaunchOnStartup(enabled);
       await persist();
-      showToast(enabled ? "已开启开机启动" : "已关闭开机启动");
     } catch (err) {
       data.window.launchOnStartup = previous;
       (e.target as HTMLInputElement).checked = previous;
@@ -475,7 +531,6 @@ function bindSettingsEvents() {
     try {
       await applyWindowConfig(data.window);
       await persist();
-      showToast(enabled ? "已开启鼠标穿透" : "已关闭鼠标穿透");
     } catch (err) {
       data.window.clickThrough = previous;
       (e.target as HTMLInputElement).checked = previous;
@@ -516,7 +571,6 @@ function bindSettingsEvents() {
   document.querySelector("#btn-data-path-change")?.addEventListener("click", async () => {
     try {
       dataPathInfo = await chooseDataFilePath(data);
-      showToast("数据路径已更新");
       render();
     } catch (err) {
       const message = String(err ?? "");
@@ -549,9 +603,8 @@ function bindEvents() {
   document.querySelector("#btn-add")?.addEventListener("click", async () => {
     const block = createBlock("", "", data.window.defaultDisplayLines);
     data.blocks.unshift(block);
-    editingId = block.id;
     await persist();
-    render({ scrollBlocksToTop: true });
+    enterEdit(block.id, { scrollBlocksToTop: true });
   });
 
   document.querySelectorAll<HTMLElement>(".block").forEach((el) => {
@@ -571,16 +624,15 @@ function bindEvents() {
           if (!block) return;
           try {
             await copyText(block.content);
-            const tip = el.querySelector<HTMLElement>(".copy-pop");
+            const tip = el.querySelector<HTMLElement>('[data-action="copy"] .ui-tip');
             if (tip) {
               tip.textContent = "已复制";
-              tip.classList.add("copied");
+              tip.classList.add("is-success");
               window.setTimeout(() => {
-                tip.textContent = "点击复制";
-                tip.classList.remove("copied");
+                tip.textContent = "复制";
+                tip.classList.remove("is-success");
               }, 1200);
             }
-            showToast("复制成功");
           } catch {
             showToast("复制失败");
           }
@@ -603,8 +655,7 @@ function bindEvents() {
 
     el.querySelector('[data-action="edit"]')?.addEventListener("click", () => {
       window.clearTimeout(copyClickTimer);
-      editingId = id;
-      render({ ensureVisibleId: id });
+      enterEdit(id);
     });
 
     el.addEventListener("dblclick", (e) => {
@@ -615,8 +666,7 @@ function bindEvents() {
       }
       e.preventDefault();
       window.clearTimeout(copyClickTimer);
-      editingId = id;
-      render({ ensureVisibleId: id });
+      enterEdit(id);
     });
 
     el.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
@@ -629,7 +679,7 @@ function bindEvents() {
       block.content = content;
       block.displayLines = clampDisplayLines(linesRaw);
       unfoldedIds.delete(id);
-      editingId = null;
+      exitEdit();
       await persist();
       render();
       showToast("已保存");
@@ -637,8 +687,7 @@ function bindEvents() {
 
     el.querySelector('[data-action="delete"]')?.addEventListener("click", async () => {
       data.blocks = data.blocks.filter((b) => b.id !== id);
-      editingId = null;
-      if (expandedId === id) expandedId = null;
+      exitEdit();
       unfoldedIds.delete(id);
       await persist();
       render();

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- PinBoard: rounded tile + optically centered map pin -->
+  <rect x="56" y="56" width="912" height="912" rx="210" ry="210" fill="#243044" stroke="#3D9CF0" stroke-width="72"/>
+  <!--
+    Pin group origin at canvas center. Silhouette bbox is balanced around (0,0)
+    so the marker reads centered in the tile (not a lightbulb).
+  -->
+  <g transform="translate(512 506)">
+    <!-- single teardrop silhouette -->
+    <path
+      fill="#3D9CF0"
+      d="M0 -176
+         C72 -176 130 -118 130 -46
+         C130 24 78 78 0 188
+         C-78 78 -130 24 -130 -46
+         C-130 -118 -72 -176 0 -176
+         Z"/>
+    <!-- hole -->
+    <circle cx="0" cy="-46" r="48" fill="#243044"/>
+  </g>
+</svg>
