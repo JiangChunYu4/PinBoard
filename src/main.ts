@@ -27,6 +27,8 @@ const app = document.querySelector("#app")!;
 let data: AppData = structuredClone(DEFAULT_DATA);
 let editingId: string | null = null;
 let expandedId: string | null = null;
+/** 进入放大/编辑铺满前的列表滚动位置，还原时恢复 */
+let listScrollSnapshot: number | null = null;
 /** 临时撑开（按 0 行显示）的区域 id，不写入持久化 */
 const unfoldedIds = new Set<string>();
 let currentView: "main" | "settings" = "main";
@@ -392,6 +394,12 @@ function renderBlock(block: Block, index: number): string {
   `;
 }
 
+/** 进入放大前记下列表滚动；已在放大态时不覆盖 */
+function rememberListScroll() {
+  if (expandedId != null) return;
+  listScrollSnapshot = document.querySelector<HTMLElement>(".blocks")?.scrollTop ?? 0;
+}
+
 function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string | null } = {}) {
   const prevScroll = document.querySelector<HTMLElement>(".blocks")?.scrollTop ?? 0;
 
@@ -418,10 +426,18 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
     return;
   }
 
-  blocksEl.scrollTop = prevScroll;
+  // 放大态 overflow:hidden，scrollTop 无意义；还原时用进入前快照
+  if (expandedId) {
+    blocksEl.scrollTop = 0;
+    return;
+  }
+
+  const scroll = listScrollSnapshot ?? prevScroll;
+  listScrollSnapshot = null;
+  blocksEl.scrollTop = scroll;
   const focusId = options.ensureVisibleId ?? editingId;
   if (focusId) {
-    // nearest：已在可视区则不滚动；仅当编辑态变高被裁切时微调
+    // nearest：已在可视区则不滚动；仅当目标被裁切时微调
     blocksEl
       .querySelector<HTMLElement>(`.block[data-id="${CSS.escape(focusId)}"]`)
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -437,6 +453,9 @@ function markTruncatedBlocks() {
 
 /** 进入编辑：铺满当前区域，便于专注修改 */
 function enterEdit(id: string, renderOpts?: { scrollBlocksToTop?: boolean; ensureVisibleId?: string | null }) {
+  rememberListScroll();
+  // 新建区域滚到顶部：还原时也应停在顶部附近
+  if (renderOpts?.scrollBlocksToTop) listScrollSnapshot = 0;
   editingId = id;
   expandedId = id;
   render(renderOpts ?? { ensureVisibleId: id });
@@ -690,8 +709,10 @@ function bindEvents() {
 
     el.querySelector('[data-action="expand"]')?.addEventListener("click", () => {
       window.clearTimeout(copyClickTimer);
-      expandedId = expandedId === id ? null : id;
-      render();
+      const collapsing = expandedId === id;
+      if (!collapsing) rememberListScroll();
+      expandedId = collapsing ? null : id;
+      render(collapsing ? { ensureVisibleId: id } : undefined);
     });
 
     el.querySelector('[data-action="edit"]')?.addEventListener("click", () => {
@@ -722,7 +743,7 @@ function bindEvents() {
       unfoldedIds.delete(id);
       exitEdit();
       await persist();
-      render();
+      render({ ensureVisibleId: id });
       showToast("已保存");
     });
 
