@@ -415,7 +415,7 @@ function renderBlock(block: Block, index: number): string {
           <button type="button" class="icon-btn" data-action="edit" aria-label="编辑">✎${uiTip("编辑", "end")}</button>
         </div>
       </div>
-      <pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">双击区域或点 ✎ 编辑；拖动标题可排序</span>'}</pre>
+      <pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">点 ✎ 编辑；拖动标题可排序</span>'}</pre>
     </article>
   `;
 }
@@ -744,17 +744,6 @@ function bindEvents() {
     });
 
     el.querySelector('[data-action="edit"]')?.addEventListener("click", () => {
-      window.clearTimeout(copyClickTimer);
-      enterEdit(id);
-    });
-
-    el.addEventListener("dblclick", (e) => {
-      if (el.classList.contains("editing")) return;
-      const target = e.target as HTMLElement;
-      if (target.closest(".icon-btn, input, textarea, .content-input, .title-input, .lines-input")) {
-        return;
-      }
-      e.preventDefault();
       window.clearTimeout(copyClickTimer);
       enterEdit(id);
     });
