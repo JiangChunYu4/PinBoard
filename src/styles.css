@@ -90,6 +90,56 @@ body {
   gap: 4px;
 }
 
+[hidden] { display: none !important; }
+
+.update-indicator { color: var(--success); font-weight: 700; }
+.update-dot {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  padding: 16px;
+  background: rgba(9, 15, 25, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.update-dialog {
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #1c2634;
+  font-size: 13px;
+}
+.update-dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.update-current { color: var(--text-dim); }
+.update-notes {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font: inherit;
+  line-height: 1.6;
+}
+.update-progress { width: 100%; accent-color: var(--accent); }
+.update-error { color: #ffa8a8; overflow-wrap: anywhere; }
+.update-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.update-actions button:disabled { opacity: 0.5; cursor: default; }
+#update-settings .setting-btn { flex-shrink: 0; }
+
 .win-btn {
   position: relative;
   width: 28px;

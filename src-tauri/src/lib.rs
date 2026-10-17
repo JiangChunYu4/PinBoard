@@ -698,6 +698,7 @@ fn start_toggle_hotkey(_app: AppHandle) {}
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             data_path: Mutex::new(PathBuf::new()),
             click_through: Mutex::new(false),

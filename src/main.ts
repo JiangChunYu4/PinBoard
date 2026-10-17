@@ -1,4 +1,5 @@
 import "./styles.css";
+import { createUpdater } from "./updater";
 import type { AppData, Block } from "./types";
 import {
   clampDisplayLines,
@@ -37,6 +38,29 @@ let toastTimer: number | undefined;
 let dragFromIndex: number | null = null;
 let suppressNextClick = false;
 let copyClickTimer: number | undefined;
+
+const updater = createUpdater({
+  async save() {
+    // Include the current draft even if the editor's save button was not clicked.
+    if (editingId) {
+      const editor = document.querySelector<HTMLElement>(".block.editing");
+      const block = data.blocks.find((item) => item.id === editingId);
+      if (editor && block) {
+        block.title = editor.querySelector<HTMLInputElement>('[data-field="title"]')!.value.trim();
+        block.content = editor.querySelector<HTMLTextAreaElement>('[data-field="content"]')!.value;
+        block.displayLines = clampDisplayLines(Number(editor.querySelector<HTMLInputElement>('[data-field="displayLines"]')!.value));
+      }
+    }
+    await persist();
+  },
+  async pauseClickThrough(paused) {
+    if (paused) {
+      tipResumeCleanup?.();
+      tipResumeCleanup = null;
+    }
+    await setClickThroughPaused(paused || currentView === "settings");
+  },
+});
 
 const DRAG_THRESHOLD = 6;
 const COPY_CLICK_DELAY = 280;
@@ -224,6 +248,7 @@ function renderTitlebar() {
         <span class="brand-name" data-tauri-drag-region>Board</span>
       </div>
       <div class="window-actions">
+        <button type="button" class="win-btn update-indicator" id="btn-update" aria-label="软件更新" hidden>↑<span class="update-dot" aria-hidden="true"></span>${uiTip("发现新版本", "end")}</button>
         <button type="button" class="win-btn${currentView === "settings" ? " active" : ""}" id="btn-settings" aria-label="设置" aria-pressed="${currentView === "settings"}">⚙${uiTip("设置", "end")}</button>
         <button type="button" class="win-btn" id="btn-minimize" aria-label="最小化">─${uiTip("最小化", "end")}</button>
         <button type="button" class="win-btn close" id="btn-close" aria-label="关闭">×${uiTip("关闭", "end")}</button>
@@ -238,6 +263,7 @@ function renderSettings(): string {
   return `
     <div class="settings-page">
       <div class="settings-list">
+        <div class="setting-row" id="update-settings"></div>
         <div class="setting-row">
           <div class="setting-meta">
             <span class="setting-name">面板透明度</span>
@@ -410,11 +436,13 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
         ${currentView === "settings" ? renderSettings() : renderMain()}
       </main>
       <div class="toast" role="status" aria-live="polite"></div>
+      <div class="update-overlay" id="update-overlay" hidden></div>
     </div>
   `;
 
   applyPanelOpacity(data.window.opacity);
   bindEvents();
+  updater.mount();
   syncCopyTips();
   markTruncatedBlocks();
 
@@ -858,4 +886,4 @@ async function boot() {
   render();
 }
 
-void boot();
+void boot().then(() => updater.start());

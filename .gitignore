@@ -31,3 +31,7 @@ src-tauri/WixTools
 # Env
 .env
 .env.*
+
+# Never commit updater private keys
+*.key
+*.key.*

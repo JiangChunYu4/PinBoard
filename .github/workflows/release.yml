@@ -2,6 +2,10 @@
 # Trigger: Actions → Release → Run workflow
 name: Release
 
+concurrency:
+  group: pinboard-release
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +17,10 @@ on:
         description: Mark as prerelease
         type: boolean
         default: false
+      notes:
+        description: Release notes shown in the app
+        type: string
+        default: "性能优化与问题修复。"
 
 jobs:
   publish-windows:
@@ -36,19 +44,40 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      - name: Verify locked Rust dependencies
+        run: cargo metadata --locked --no-deps --format-version 1 --manifest-path src-tauri/Cargo.toml
+
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Validate updater signing configuration
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm run check-updater
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/check-updater.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "Configure the TAURI_SIGNING_PRIVATE_KEY Actions secret before publishing."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw "Configure the TAURI_SIGNING_PRIVATE_KEY_PASSWORD Actions secret before publishing."
+          }
 
       - name: Build and upload release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: PinBoard v__VERSION__
-          releaseBody: |
-            Download the Windows installer from Assets below.
-
-            从下方 Assets 下载 Windows 安装包（NSIS `.exe`）。
+          releaseBody: ${{ inputs.notes }}
+          includeUpdaterJson: true
+          args: -- --locked
           releaseDraft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
