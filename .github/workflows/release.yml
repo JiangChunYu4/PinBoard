@@ -58,7 +58,7 @@ jobs:
         run: |
           npm run check-updater
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test scripts/check-updater.test.mjs
+          node --test scripts/check-updater.test.mjs scripts/create-updater-manifest.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw "Configure the TAURI_SIGNING_PRIVATE_KEY Actions secret before publishing."
@@ -68,6 +68,7 @@ jobs:
           }
 
       - name: Build and upload release
+        id: release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -77,7 +78,21 @@ jobs:
           tagName: v__VERSION__
           releaseName: PinBoard v__VERSION__
           releaseBody: ${{ inputs.notes }}
-          includeUpdaterJson: true
+          uploadUpdaterJson: false
           args: -- --locked
           releaseDraft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
+
+      - name: Publish updater manifest with public download URLs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.release.outputs.releaseId }}
+        run: |
+          gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" --jq '{tag_name, body, published_at, created_at}' > release-info.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/create-updater-manifest.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = Get-Content release-info.json -Raw | ConvertFrom-Json
+          gh release upload $release.tag_name src-tauri/target/latest.json --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

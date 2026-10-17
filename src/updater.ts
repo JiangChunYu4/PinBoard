@@ -132,7 +132,7 @@ export function createUpdater(hooks: {
       phase = next ? "available" : "idle";
     } catch (err) {
       console.error("Update check failed", err);
-      error = "检查更新失败，请确认能连接 GitHub 后重试。";
+      error = `检查更新失败，请确认能连接 GitHub 后重试。\n${String(err)}`;
       phase = update ? "available" : "idle";
     }
     refresh();
@@ -166,7 +166,8 @@ export function createUpdater(hooks: {
       }
     } catch (err) {
       console.error("Update failed", err);
-      error = phase === "installing" ? "保存数据或安装失败，请重试。" : "下载或签名验证失败，请重试。";
+      const message = phase === "installing" ? "保存数据或安装失败，请重试。" : "下载或签名验证失败，请重试。";
+      error = `${message}\n${String(err)}`;
       phase = downloaded ? "ready" : "available";
     }
     refresh();

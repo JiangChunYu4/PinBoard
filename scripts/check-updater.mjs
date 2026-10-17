@@ -16,7 +16,7 @@ export function validateUpdaterConfig(value) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     validateUpdaterConfig(JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8")));
-    console.log("更新公钥与更新产物配置检查通过。");
+    console.log("更新公钥与更新产物配置格式检查通过（不验证下载包签名或私钥密码）。");
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

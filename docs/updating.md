@@ -29,6 +29,9 @@ PinBoard 使用 Tauri 2 官方 Updater，通过 GitHub Releases 的 `latest.json
 5. 正式发布时 `draft`、`prerelease` 均关闭。草稿和预发布不通过 `/releases/latest` 分发给正式版用户。
 
 Release 应包含 Windows 安装包、对应 `.sig` 和 `latest.json`。更新说明来自 Release 正文，应用按纯文本显示。
+工作流使用 `scripts/create-updater-manifest.mjs` 生成清单，使用公开 Release 下载直链，避免匿名 GitHub API 额度影响安装包下载。
+生成时同时检查签名与配置公钥的密钥标识一致；客户端仍会完整验证下载包签名。
+`check-updater` 仅验证配置格式，不能证明安装版本内置公钥、发布签名、下载包三者匹配。
 不要仅在发布完成后修改 Release 正文来更新应用内说明：`latest.json` 已生成，需要同步修改其 `notes`。
 每次更新发布更高版本，并保证 manifest、签名、安装包配套。
 

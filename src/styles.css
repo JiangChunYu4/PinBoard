@@ -135,7 +135,7 @@ body {
   line-height: 1.6;
 }
 .update-progress { width: 100%; accent-color: var(--accent); }
-.update-error { color: #ffa8a8; overflow-wrap: anywhere; }
+.update-error { color: #ffa8a8; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
 .update-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .update-actions button:disabled { opacity: 0.5; cursor: default; }
 #update-settings .setting-btn { flex-shrink: 0; }
