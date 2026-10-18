@@ -28,6 +28,8 @@ const app = document.querySelector("#app")!;
 let data: AppData = structuredClone(DEFAULT_DATA);
 let editingId: string | null = null;
 let expandedId: string | null = null;
+/** 编辑中的子区域草稿；null = 纯文本编辑模式（结构操作与保存前会先刷回 block） */
+let subsDraft: string[] | null = null;
 /** 进入放大/编辑铺满前的列表滚动位置，还原时恢复 */
 let listScrollSnapshot: number | null = null;
 /** 临时撑开（按 0 行显示）的区域 id，不写入持久化 */
@@ -42,15 +44,7 @@ let copyClickTimer: number | undefined;
 const updater = createUpdater({
   async save() {
     // Include the current draft even if the editor's save button was not clicked.
-    if (editingId) {
-      const editor = document.querySelector<HTMLElement>(".block.editing");
-      const block = data.blocks.find((item) => item.id === editingId);
-      if (editor && block) {
-        block.title = editor.querySelector<HTMLInputElement>('[data-field="title"]')!.value.trim();
-        block.content = editor.querySelector<HTMLTextAreaElement>('[data-field="content"]')!.value;
-        block.displayLines = clampDisplayLines(Number(editor.querySelector<HTMLInputElement>('[data-field="displayLines"]')!.value));
-      }
-    }
+    flushEditingDraft();
     await persist();
   },
   async pauseClickThrough(paused) {
@@ -64,12 +58,14 @@ const updater = createUpdater({
 
 const DRAG_THRESHOLD = 6;
 const COPY_CLICK_DELAY = 280;
+/** 单击容差：位移小于该值视为单击（非拖动/拖选） */
+const SUB_CLICK_TOLERANCE = 4;
 const COPY_TIP_CONTENT = "复制内容";
 const COPY_TIP_TITLE = "复制标题";
 let ctrlHeld = false;
 let copyTipChromeBound = false;
 
-/** 与 ✎ 同重量的线框图标，避免 Unicode 全屏符在部分字体里变形 */
+/** 与放大/折叠同重的线框图标，避免 Unicode 字形在不同字体里变形 */
 const ICON_EXPAND = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ICON_COLLAPSE = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 /** 临时撑开 / 折叠行数限制 */
@@ -77,12 +73,24 @@ const ICON_UNFOLD = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true
 const ICON_FOLD = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 10.5h10M8 10.5V3.5M5 6l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 /** 覆盖应用到全部区域 */
 const ICON_APPLY_ALL = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M11 2.5l1.8 1.8L15.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+/** 编辑态功能图标：统一线性 SVG（stroke 1.5 / 16 视框），替换原先的 emoji 字形 */
+const ICON_CHECK = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8.6l3.1 3.1L12.8 4.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_TRASH = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 4.5h9.6M6.4 4.5V3h3.2v1.5M4.7 4.5l.6 8a1 1 0 0 0 1 .9h3.4a1 1 0 0 0 1-.9l.6-8M6.9 7v4M9.1 7v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_PENCIL = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.8 2.7l1.5 1.5-8.1 8.1-2.2.5.5-2.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 4l1.5 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+const ICON_ARROW_UP = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.6M4.5 7.1L8 3.5l3.5 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_ARROW_DOWN = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v9.4M4.5 8.9L8 12.5l3.5-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const ICON_CLOSE = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+/** 组织方式切换（整段文本 ↔ 子区域）：两种模式下共用同一枚图标，动作名由气泡说明 */
+const ICON_LAYOUT_SWITCH = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5h9M9 3l2.5 2.5L9 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 10.5h-9M7 8l-2.5 2.5L7 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 type TipAlign = "start" | "center" | "end";
 
-/** 自定义气泡提示（与区域标题「复制」同款，避免系统 title 风格不一致） */
-function uiTip(text: string, align: TipAlign = "center"): string {
-  return `<span class="ui-tip tip-${align}" role="tooltip">${escapeHtml(text)}</span>`;
+/**
+ * 自定义气泡提示（与区域标题「复制」同款，避免系统 title 风格不一致）
+ * above=true 时气泡改在元素上方，用于贴近容器底部的按钮（避免被滚动容器裁切）
+ */
+function uiTip(text: string, align: TipAlign = "center", above = false): string {
+  return `<span class="ui-tip tip-${align}${above ? " tip-above" : ""}" role="tooltip">${escapeHtml(text)}</span>`;
 }
 
 function copyTipLabel(withCtrl: boolean): string {
@@ -130,6 +138,31 @@ function applyPanelOpacity(value: number) {
 
 async function persist() {
   await saveBlocks(data.blocks, data.window);
+}
+
+/** 把编辑态 DOM 里的最新输入刷回 data（不持久化）；保存与结构操作前调用，避免重渲染丢输入 */
+function flushEditingDraft(): void {
+  if (!editingId) return;
+  const editor = document.querySelector<HTMLElement>(".block.editing");
+  const block = data.blocks.find((b) => b.id === editingId);
+  if (!editor || !block) return;
+
+  const titleEl = editor.querySelector<HTMLInputElement>('[data-field="title"]');
+  if (titleEl) block.title = titleEl.value.trim();
+
+  if (subsDraft != null) {
+    const values = Array.from(editor.querySelectorAll<HTMLTextAreaElement>('[data-field="sub-input"]')).map((t) => t.value);
+    subsDraft = values;
+    block.subRegions = values;
+    // content 同步为子区域拼接值：切回纯文本模式或子区域被清空时内容不丢
+    block.content = values.filter((s) => s.trim().length > 0).join("\n\n");
+  } else {
+    const contentEl = editor.querySelector<HTMLTextAreaElement>('[data-field="content"]');
+    if (contentEl) block.content = contentEl.value;
+  }
+
+  const linesEl = editor.querySelector<HTMLInputElement>('[data-field="displayLines"]');
+  if (linesEl) block.displayLines = clampDisplayLines(Number(linesEl.value));
 }
 
 function moveBlock(from: number, to: number) {
@@ -364,21 +397,49 @@ function renderBlock(block: Block, index: number): string {
   const lines = clampDisplayLines(block.displayLines ?? DEFAULT_DISPLAY_LINES);
   const isUnfolded = unfoldedIds.has(block.id);
   const expandClass = isExpanded ? " is-expanded" : "";
+  const hasSubs = (block.subRegions?.length ?? 0) > 0;
   // 放大态 / 临时撑开：忽略行数限制；折叠恢复后仍用已保存 displayLines
   const showClamp = !isExpanded && !isUnfolded && lines > 0;
+  // 行数折叠按钮：纯 content 块与子区域块一致（都受 displayLines 限制）
   const canToggleFold = !isExpanded && (lines > 0 || isUnfolded);
 
   if (isEditing) {
+    const editingSubs = subsDraft != null ? subsDraft : null;
+    // 同一个按钮、同一枚图标，动作名交给气泡：气泡说明「点下去会变成什么」
+    const convertLabel = editingSubs ? "转为整段文本" : "转为子区域";
     return `
       <article class="block editing${expandClass}" data-id="${block.id}" data-index="${index}">
         <div class="block-head">
           <input class="title-input" data-field="title" value="${escapeAttr(block.title)}" placeholder="区域名称" />
           <div class="block-tools">
-            <button type="button" class="icon-btn" data-action="save" aria-label="保存">✓${uiTip("保存", "end")}</button>
-            <button type="button" class="icon-btn danger" data-action="delete" aria-label="删除">🗑${uiTip("删除", "end")}</button>
+            <button type="button" class="icon-btn" data-action="toggle-subs" aria-label="${convertLabel}">${ICON_LAYOUT_SWITCH}${uiTip(convertLabel, "end")}</button>
+            <button type="button" class="icon-btn" data-action="save" aria-label="保存">${ICON_CHECK}${uiTip("保存", "end")}</button>
+            <button type="button" class="icon-btn danger" data-action="delete" aria-label="删除">${ICON_TRASH}${uiTip("删除", "end")}</button>
           </div>
         </div>
-        <textarea class="content-input" data-field="content" rows="4" placeholder="需要快速复制的文本">${escapeHtml(block.content)}</textarea>
+        ${
+          editingSubs
+            ? `
+        <div class="subs-editor">
+          ${editingSubs
+            .map(
+              (text, i) => `
+          <div class="sub-edit" data-sub-index="${i}">
+            <span class="sub-index" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span>
+            <textarea class="sub-input" data-field="sub-input" rows="1" placeholder="子区域内容（可多行），展示时单击即可整段复制">${escapeHtml(text)}</textarea>
+            <div class="sub-edit-tools">
+              <button type="button" class="icon-btn" data-action="sub-up" aria-label="上移" ${i === 0 ? "disabled" : ""}>${ICON_ARROW_UP}${uiTip("上移", "end")}</button>
+              <button type="button" class="icon-btn" data-action="sub-down" aria-label="下移" ${i === editingSubs.length - 1 ? "disabled" : ""}>${ICON_ARROW_DOWN}${uiTip("下移", "end")}</button>
+              <button type="button" class="icon-btn danger" data-action="sub-del" aria-label="删除该子区域">${ICON_CLOSE}${uiTip("删除该子区域", "end")}</button>
+            </div>
+          </div>`,
+            )
+            .join("")}
+          <button type="button" class="sub-add-btn" data-action="sub-add">＋ 新增子区域</button>
+        </div>`
+            : `
+        <textarea class="content-input" data-field="content" rows="4" placeholder="需要快速复制的文本">${escapeHtml(block.content)}</textarea>`
+        }
         <div class="block-settings">
           <label class="lines-setting">
             <span>显示行数</span>
@@ -412,12 +473,83 @@ function renderBlock(block: Block, index: number): string {
               : ""
           }
           <button type="button" class="icon-btn" data-action="expand" aria-label="${isExpanded ? "还原" : "放大"}">${isExpanded ? ICON_COLLAPSE : ICON_EXPAND}${uiTip(isExpanded ? "还原" : "放大", "end")}</button>
-          <button type="button" class="icon-btn" data-action="edit" aria-label="编辑">✎${uiTip("编辑", "end")}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="编辑">${ICON_PENCIL}${uiTip("编辑", "end")}</button>
         </div>
       </div>
-      <pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">点 ✎ 编辑；拖动标题可排序</span>'}</pre>
+      ${
+        hasSubs
+          ? renderSubRegions(block, showClamp, lines)
+          : `<pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">点右上「编辑」按钮；拖动标题可排序</span>'}</pre>`
+      }
     </article>
   `;
+}
+
+/** 子区域展示态：整体受该区域的「显示行数」限制（与纯文本块同一套折叠逻辑），单击整段复制 */
+function renderSubRegions(block: Block, clamp: boolean, lines: number): string {
+  const subs = block.subRegions!;
+  const clampClass = clamp ? " is-clamped" : "";
+  const clampStyle = clamp ? ` style="--display-lines: ${lines}"` : "";
+  return `
+    <div class="block-subs${clampClass}"${clampStyle}>
+      ${subs
+        .map(
+          (text, i) => `
+        <pre class="block-sub" data-sub-index="${i}">${escapeHtml(text)}</pre>
+        `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+/**
+ * 整块复制文本（点标题复制）：子区域模式 = 各段按序以单换行拼接，纯 content 块 = 原文。
+ * 单换行而不是空行：整块复制的结果多半直接贴进表单/编辑器，空行会变成多余的段落间隔。
+ * 注意与「转为整段文本」区分——后者用空行拼接（在 flushEditingDraft 里），
+ * 这样「整段 → 自动分段」才能按空行还原出原来的分段边界，往返稳定。
+ */
+function blockContentText(block: Block): string {
+  return block.subRegions?.length ? block.subRegions.join("\n") : block.content;
+}
+
+/** 空行是用户主动分段的最强信号：任何一行 trimmed 为空即视为存在分段意图 */
+function hasBlankLine(lines: string[]): boolean {
+  return lines.some((line) => line.trim().length === 0);
+}
+
+/**
+ * 纯文本 → 子区域：纯结构切分，不做语义识别，不改写任何字符。
+ * 判定优先级（自上而下，命中即停）：
+ *   1. 存在空行   → 按空行分段，段内换行保留（一个空行 = 一道边界）
+ *   2. 多行无空行 → 逐行分段（简历常见的「一行一项」）
+ *   3. 单行       → 整段作为唯一子区域
+ * 切分过度时由编辑态的「合并到上一段」一键回退，不在算法里猜语义。
+ */
+function splitIntoSubRegions(text: string): string[] {
+  const normalized = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  if (!normalized.trim()) return [];
+  const lines = normalized.split("\n");
+
+  if (!hasBlankLine(lines)) {
+    return lines.filter((line) => line.trim().length > 0);
+  }
+
+  const grouped: string[][] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line.trim().length === 0) {
+      if (current.length) {
+        grouped.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length) grouped.push(current);
+
+  return grouped.map((group) => group.join("\n"));
 }
 
 /** 进入放大前记下列表滚动；已在放大态时不覆盖 */
@@ -444,6 +576,7 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
   bindEvents();
   updater.mount();
   syncCopyTips();
+  autoGrowSubInputs();
   markTruncatedBlocks();
 
   const blocksEl = document.querySelector<HTMLElement>(".blocks");
@@ -472,11 +605,21 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
   }
 }
 
-/** 限行裁切且内容溢出时标记，用于底部淡出提示 */
-function markTruncatedBlocks() {
-  document.querySelectorAll<HTMLElement>(".block-content.is-clamped").forEach((el) => {
-    el.classList.toggle("is-truncated", el.scrollHeight > el.clientHeight + 1);
+/** 子区域编辑框高度随内容撑开：不限制可视行高，长文本完整可见 */
+function autoGrowSubInputs() {
+  document.querySelectorAll<HTMLTextAreaElement>(".sub-input").forEach((ta) => {
+    ta.style.height = "auto";
+    ta.style.height = `${Math.max(ta.scrollHeight, 30)}px`;
   });
+}
+
+/** 限行裁切且内容溢出时标记，用于底部淡出提示（纯文本块与子区域块一致） */
+function markTruncatedBlocks() {
+  document
+    .querySelectorAll<HTMLElement>(".block-content.is-clamped, .block-subs.is-clamped")
+    .forEach((el) => {
+      el.classList.toggle("is-truncated", el.scrollHeight > el.clientHeight + 1);
+    });
 }
 
 /** 进入编辑：铺满当前区域，便于专注修改 */
@@ -484,6 +627,8 @@ function enterEdit(id: string, renderOpts?: { scrollBlocksToTop?: boolean; ensur
   rememberListScroll();
   // 新建区域滚到顶部：还原时也应停在顶部附近
   if (renderOpts?.scrollBlocksToTop) listScrollSnapshot = 0;
+  const block = data.blocks.find((b) => b.id === id);
+  subsDraft = block?.subRegions ? [...block.subRegions] : null;
   editingId = id;
   expandedId = id;
   render(renderOpts ?? { ensureVisibleId: id });
@@ -493,6 +638,7 @@ function enterEdit(id: string, renderOpts?: { scrollBlocksToTop?: boolean; ensur
 function exitEdit() {
   editingId = null;
   expandedId = null;
+  subsDraft = null;
 }
 
 let tipResumeCleanup: (() => void) | null = null;
@@ -547,6 +693,7 @@ function bindWindowChrome() {
     if (enteringSettings) {
       editingId = null;
       expandedId = null;
+      subsDraft = null;
       unfoldedIds.clear();
       tipResumeCleanup?.();
       tipResumeCleanup = null;
@@ -708,7 +855,7 @@ function bindEvents() {
             return;
           }
           try {
-            await copyText(copyTitle ? block.title : block.content);
+            await copyText(copyTitle ? block.title : blockContentText(block));
             const tip = el.querySelector<HTMLElement>('[data-action="copy"] .ui-tip');
             if (tip) {
               tip.textContent = copyTitle ? "已复制标题" : "已复制内容";
@@ -749,14 +896,14 @@ function bindEvents() {
     });
 
     el.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
-      const title = (el.querySelector('[data-field="title"]') as HTMLInputElement).value.trim();
-      const content = (el.querySelector('[data-field="content"]') as HTMLTextAreaElement).value;
-      const linesRaw = Number((el.querySelector('[data-field="displayLines"]') as HTMLInputElement).value);
+      flushEditingDraft();
       const block = data.blocks.find((b) => b.id === id);
       if (!block) return;
-      block.title = title;
-      block.content = content;
-      block.displayLines = clampDisplayLines(linesRaw);
+      // 子区域清到全空 → 退回纯文本块（content 已是拼接值，内容不丢）
+      if (block.subRegions) {
+        const subs = block.subRegions.filter((s) => s.trim().length > 0);
+        block.subRegions = subs.length ? subs : undefined;
+      }
       unfoldedIds.delete(id);
       exitEdit();
       await persist();
@@ -773,13 +920,77 @@ function bindEvents() {
       showToast("已删除");
     });
 
+    // ---- 子区域编辑：结构操作先刷回草稿再重渲染，输入不丢 ----
+    el.querySelectorAll<HTMLTextAreaElement>('[data-field="sub-input"]').forEach((ta) => {
+      ta.addEventListener("input", autoGrowSubInputs);
+    });
+
+    el.querySelector('[data-action="sub-add"]')?.addEventListener("click", () => {
+      flushEditingDraft();
+      subsDraft?.push("");
+      render({ ensureVisibleId: id });
+      const editors = document.querySelectorAll<HTMLTextAreaElement>(
+        `.block.editing [data-field="sub-input"]`,
+      );
+      editors[editors.length - 1]?.focus();
+    });
+
+    // 同一个按钮在两个模式间切换：子区域 → 整段（content 已是空行拼接值）/ 整段 → 自动分段
+    el.querySelector('[data-action="toggle-subs"]')?.addEventListener("click", () => {
+      flushEditingDraft();
+      const block = data.blocks.find((b) => b.id === id);
+      if (!block) return;
+      if (subsDraft != null) {
+        subsDraft = null;
+      } else {
+        subsDraft = splitIntoSubRegions(block.content);
+        if (subsDraft.length === 0) subsDraft = [""];
+      }
+      render({ ensureVisibleId: id });
+    });
+
+    el.querySelectorAll<HTMLElement>(".sub-edit").forEach((row) => {
+      const subIndex = Number(row.dataset.subIndex);
+      if (!Number.isFinite(subIndex)) return;
+
+      // 进入编辑（光标在输入框里）时标记该卡：此时隐藏右上工具条，避免挡住这一段的内容
+      row.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]')?.addEventListener("focus", () => {
+        row.classList.add("is-typing");
+      });
+      row.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]')?.addEventListener("blur", () => {
+        row.classList.remove("is-typing");
+      });
+
+      row.querySelector('[data-action="sub-up"]')?.addEventListener("click", () => {
+        flushEditingDraft();
+        if (subsDraft != null && subIndex > 0 && subIndex < subsDraft.length) {
+          [subsDraft[subIndex - 1], subsDraft[subIndex]] = [subsDraft[subIndex], subsDraft[subIndex - 1]];
+        }
+        render({ ensureVisibleId: id });
+      });
+
+      row.querySelector('[data-action="sub-down"]')?.addEventListener("click", () => {
+        flushEditingDraft();
+        if (subsDraft != null && subIndex >= 0 && subIndex < subsDraft.length - 1) {
+          [subsDraft[subIndex + 1], subsDraft[subIndex]] = [subsDraft[subIndex], subsDraft[subIndex + 1]];
+        }
+        render({ ensureVisibleId: id });
+      });
+
+      row.querySelector('[data-action="sub-del"]')?.addEventListener("click", () => {
+        flushEditingDraft();
+        if (subsDraft != null) subsDraft.splice(subIndex, 1);
+        render({ ensureVisibleId: id });
+      });
+    });
+
     el.addEventListener("pointerdown", (e) => {
       if (editingId || expandedId || e.button !== 0 || el.classList.contains("editing")) return;
       const target = e.target as HTMLElement;
-      // 正文保留选字；编辑按钮/输入框不启动拖拽
+      // 正文保留选字；子区域保留单击复制与拖选；编辑按钮/输入框不启动拖拽
       if (
         target.closest(
-          ".block-content, .icon-btn, .block-title, input, textarea, .content-input, .title-input",
+          ".block-content, .block-sub, .icon-btn, .block-title, input, textarea, .content-input, .title-input",
         )
       ) {
         return;
@@ -794,7 +1005,93 @@ function bindEvents() {
       if (editingId || expandedId || pe.button !== 0 || el.classList.contains("editing")) return;
       startBlockReorder(el, index, pe);
     });
+
+    // 子区域：单击整段复制；拖选/双击选词时交还原生 Ctrl+C
+    el.querySelectorAll<HTMLElement>(".block-sub").forEach((sub) => {
+      const subIndex = Number(sub.dataset.subIndex);
+      if (!Number.isFinite(subIndex)) return;
+      let startPt: { x: number; y: number } | null = null;
+
+      sub.addEventListener("pointerdown", (e) => {
+        const pe = e as PointerEvent;
+        if (pe.button !== 0) return;
+        startPt = { x: pe.clientX, y: pe.clientY };
+      });
+
+      sub.addEventListener("pointerup", (e) => {
+        const pe = e as PointerEvent;
+        if (pe.button !== 0 || !startPt) return;
+        const dist = Math.hypot(pe.clientX - startPt.x, pe.clientY - startPt.y);
+        startPt = null;
+        if (dist >= SUB_CLICK_TOLERANCE || suppressNextClick) return;
+
+        window.clearTimeout(copyClickTimer);
+        // 延迟执行：双击选词的第二次 pointerup 会带上选区，届时取消本次复制
+        copyClickTimer = window.setTimeout(() => {
+          if (window.getSelection()?.toString()) return;
+          void (async () => {
+            const block = data.blocks.find((b) => b.id === id);
+            const text = block?.subRegions?.[subIndex];
+            if (!block || text == null) return;
+            try {
+              await copyText(text);
+              flashSubCopied(sub);
+            } catch {
+              showToast("复制失败");
+            }
+          })();
+        }, COPY_CLICK_DELAY);
+      });
+    });
   });
+}
+
+/**
+ * 子区域复制成功的一次性反馈：颜色信号 + 一次性文字气泡。
+ * 两条都不得碰被复制的那一行——值的可见性是置顶面板的意义所在。
+ * 颜色信号 = 左侧绿条 + 从左淡出的洗色；气泡浮在该行下方（挂 body），1.2s 后自行消失。
+ */
+function flashSubCopied(sub: HTMLElement) {
+  window.clearTimeout(Number(sub.dataset.flashTimer ?? 0));
+  sub.classList.add("is-copied");
+  showCopiedTip(sub);
+  const timer = window.setTimeout(() => {
+    sub.classList.remove("is-copied");
+  }, 1100);
+  sub.dataset.flashTimer = String(timer);
+}
+
+let copiedTip: HTMLElement | null = null;
+
+/**
+ * 一次性「已复制」气泡：挂到 body 用 fixed 定位，浮在被复制行的下方。
+ * 挂在行内会被限行容器的 overflow:hidden 裁掉，也会遮住这一行的内容——两个都不接受。
+ */
+function showCopiedTip(sub: HTMLElement) {
+  copiedTip?.remove();
+  const tip = document.createElement("span");
+  tip.className = "ui-tip tip-start is-success is-floating";
+  tip.textContent = "已复制";
+  document.body.appendChild(tip);
+  copiedTip = tip;
+
+  const rect = sub.getBoundingClientRect();
+  const height = tip.offsetHeight;
+  const below = rect.bottom + 6;
+  // 贴到视口底部时翻到该行上方，箭头同步翻转
+  const flip = below + height > window.innerHeight - 4;
+  if (flip) tip.classList.add("tip-above");
+  tip.style.left = `${Math.max(rect.left + 8, 4)}px`;
+  tip.style.top = `${flip ? Math.max(rect.top - height - 6, 4) : below}px`;
+
+  const kill = () => {
+    window.removeEventListener("scroll", kill, { capture: true });
+    tip.remove();
+    if (copiedTip === tip) copiedTip = null;
+  };
+  // 滚动后 fixed 定位会与内容脱节，直接撤掉；正常情况由计时器收尾
+  window.addEventListener("scroll", kill, { capture: true });
+  window.setTimeout(kill, 1200);
 }
 
 function escapeHtml(text: string): string {
@@ -872,6 +1169,8 @@ async function boot() {
     data = structuredClone(DEFAULT_DATA);
   }
   bindCopyTipChrome();
+  // 窗口尺寸变化后子区域编辑框需重算高度，避免撑高不足导致内容被裁
+  window.addEventListener("resize", autoGrowSubInputs);
   render();
 }
 

@@ -444,6 +444,13 @@ body {
   overflow: auto;
 }
 
+.blocks.is-expanded .block.is-expanded .block-subs {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+
 .blocks.is-expanded .block.is-expanded .block-content::-webkit-scrollbar {
   width: 6px;
 }
@@ -468,6 +475,8 @@ body {
 /* 统一自定义滚动条，并彻底去掉上下箭头按钮（WebView2） */
 .blocks::-webkit-scrollbar,
 .block-content::-webkit-scrollbar,
+.block-subs::-webkit-scrollbar,
+.subs-editor::-webkit-scrollbar,
 .content-input::-webkit-scrollbar,
 .settings-list::-webkit-scrollbar {
   width: 6px;
@@ -476,12 +485,18 @@ body {
 
 .blocks::-webkit-scrollbar-button,
 .block-content::-webkit-scrollbar-button,
+.block-subs::-webkit-scrollbar-button,
+.subs-editor::-webkit-scrollbar-button,
 .content-input::-webkit-scrollbar-button,
 .settings-list::-webkit-scrollbar-button,
 .blocks::-webkit-scrollbar-button:start:decrement,
 .blocks::-webkit-scrollbar-button:end:increment,
 .block-content::-webkit-scrollbar-button:start:decrement,
 .block-content::-webkit-scrollbar-button:end:increment,
+.block-subs::-webkit-scrollbar-button:start:decrement,
+.block-subs::-webkit-scrollbar-button:end:increment,
+.subs-editor::-webkit-scrollbar-button:start:decrement,
+.subs-editor::-webkit-scrollbar-button:end:increment,
 .content-input::-webkit-scrollbar-button:start:decrement,
 .content-input::-webkit-scrollbar-button:end:increment,
 .settings-list::-webkit-scrollbar-button:start:decrement,
@@ -490,6 +505,10 @@ body {
 .blocks::-webkit-scrollbar-button:vertical:end:increment,
 .block-content::-webkit-scrollbar-button:vertical:start:decrement,
 .block-content::-webkit-scrollbar-button:vertical:end:increment,
+.block-subs::-webkit-scrollbar-button:vertical:start:decrement,
+.block-subs::-webkit-scrollbar-button:vertical:end:increment,
+.subs-editor::-webkit-scrollbar-button:vertical:start:decrement,
+.subs-editor::-webkit-scrollbar-button:vertical:end:increment,
 .content-input::-webkit-scrollbar-button:vertical:start:decrement,
 .content-input::-webkit-scrollbar-button:vertical:end:increment,
 .settings-list::-webkit-scrollbar-button:vertical:start:decrement,
@@ -504,6 +523,8 @@ body {
 
 .blocks::-webkit-scrollbar-track,
 .block-content::-webkit-scrollbar-track,
+.block-subs::-webkit-scrollbar-track,
+.subs-editor::-webkit-scrollbar-track,
 .content-input::-webkit-scrollbar-track,
 .settings-list::-webkit-scrollbar-track {
   margin: 0;
@@ -511,12 +532,16 @@ body {
 }
 
 .blocks::-webkit-scrollbar-thumb,
+.block-subs::-webkit-scrollbar-thumb,
+.subs-editor::-webkit-scrollbar-thumb,
 .settings-list::-webkit-scrollbar-thumb {
   background: rgba(148, 163, 184, 0.28);
   border-radius: 999px;
 }
 
 .blocks::-webkit-scrollbar-thumb:hover,
+.block-subs::-webkit-scrollbar-thumb:hover,
+.subs-editor::-webkit-scrollbar-thumb:hover,
 .settings-list::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.45);
 }
@@ -689,6 +714,25 @@ body.is-reordering .block:not(.dragging) {
   transform: translateX(-50%);
 }
 
+/* 贴近容器底部的按钮：气泡翻到上方，箭头同步翻转 */
+.ui-tip.tip-above {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.ui-tip.tip-above::after {
+  bottom: auto;
+  top: 100%;
+  border-bottom-color: transparent;
+  border-top-color: rgba(16, 24, 36, 0.96);
+}
+
+/* 上翻气泡的入场位移与下方气泡相反；显示时的归位由各 tip-* 的 hover 规则统一处理 */
+.ui-tip.tip-above.tip-start,
+.ui-tip.tip-above.tip-end {
+  transform: translateY(4px);
+}
+
 .ui-tip.tip-end::after {
   right: 12px;
 }
@@ -728,6 +772,38 @@ body.is-reordering .block:not(.dragging) {
 .ui-tip.is-success {
   color: var(--success);
   border-color: rgba(62, 207, 142, 0.4);
+}
+
+/* 复制成功的气泡：脱离限行容器挂 body，浮在被复制行的下方，出现即淡出 */
+.ui-tip.is-floating {
+  position: fixed;
+  /* 翻转到上方用 tip-above 只借它的箭头方向：它的 bottom 会与固定定位的 top 打架，
+     把高度算成负值。位置一律由 JS 写 inline top，bottom 必须废弃 */
+  bottom: auto;
+  z-index: 300;
+  opacity: 0;
+  transform: none;
+  pointer-events: none;
+  animation: ui-tip-float 1.2s ease forwards;
+}
+
+@keyframes ui-tip-float {
+  0% {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  12% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  76% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
 }
 
 .block-tools {
@@ -810,7 +886,8 @@ body.is-reordering .block:not(.dragging) {
 
 body.is-reordering,
 body.is-reordering .block,
-body.is-reordering .block-content {
+body.is-reordering .block-content,
+body.is-reordering .block-sub {
   cursor: grabbing !important;
   user-select: none !important;
   -webkit-user-select: none !important;
@@ -819,6 +896,238 @@ body.is-reordering .block-content {
 .block-content::selection {
   background: rgba(61, 156, 240, 0.45);
   color: #fff;
+}
+
+/* ---- 子区域（R1）：每段独立复制，单击整段，拖选交还原生 ---- */
+.block-subs {
+  display: flex;
+  flex-direction: column;
+  min-height: 40px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* 竖向不留内边距：行高 1.55 自带上下留白，这样 N 行 = N×行高，
+   显示行数才与视觉一致（否则每段的内边距会层层吃掉可见行数） */
+.block-sub {
+  position: relative;
+  margin: 0;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #d7e2f1;
+  /* 该行的主要动作是「单击复制整段」，光标直接说明这一点（拖选仍可用） */
+  cursor: copy;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: background 0.12s ease, box-shadow 0.12s ease, color 0.16s ease;
+}
+
+/* 子区域边界：实线 + 足够对比；用绝对定位伪元素而非 border，
+   因为 border 会占 1px 高度，N 行就会被算成溢出、末行被误淡出 */
+.block-sub + .block-sub::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.42);
+  pointer-events: none;
+}
+
+/* 悬停反馈：底色 + 左侧强调条（用 inset 阴影，不改变布局、不抖动） */
+.block-sub:hover {
+  background: rgba(61, 156, 240, 0.14);
+  box-shadow: inset 2px 0 0 rgba(61, 156, 240, 0.75);
+}
+
+/* 子区域同样受本区域「显示行数」限制，溢出时底部淡出 */
+.block-subs.is-clamped {
+  position: relative;
+  max-height: calc(1.55em * var(--display-lines, 4));
+  overflow: hidden;
+}
+
+/* 行高固定，裁切点总落在行边界上，所以淡出只做 0.8 行的轻提示，
+   不整行压暗（否则最后一段完整的子区域会像被禁用） */
+.block-subs.is-clamped.is-truncated::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0.8em;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-block));
+}
+
+.block:hover .block-subs.is-clamped.is-truncated::after {
+  background: linear-gradient(to bottom, transparent, var(--bg-block-hover));
+}
+
+/* 复制成功的一次性反馈：纯颜色信号，文字一字不动
+   —— 值的可见性是置顶面板的意义所在，遮挡或替换都是倒退。
+   左侧绿条负责「在哪一段」，从左淡出的洗色负责「刚刚发生了什么」。 */
+/* 复制瞬间让绿色信号独占这一行：先撤掉悬停蓝底，否则绿叠蓝会发青、信号变弱 */
+.block-sub.is-copied,
+.block-sub.is-copied:hover {
+  background: transparent;
+  box-shadow: inset 3px 0 0 rgba(62, 207, 142, 0.95);
+}
+
+.block-sub.is-copied::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* 洗色只覆盖左半，右侧保持原样，避免整行泛绿压住文字 */
+  background: linear-gradient(
+    90deg,
+    rgba(62, 207, 142, 0.34),
+    rgba(62, 207, 142, 0.12) 34%,
+    transparent 62%
+  );
+  animation: sub-copied-fade 1.05s ease-out forwards;
+}
+
+@keyframes sub-copied-fade {
+  0% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.block-sub::selection,
+.block-sub *::selection {
+  background: rgba(61, 156, 240, 0.45);
+  color: #fff;
+}
+
+/* ---- 子区域编辑态 ---- */
+.subs-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 每段是一张卡片：卡片本身即输入区（输入框透明），避免卡里套框的双层边界。
+   高度只服务于内容——操作按钮改为悬停浮现，一行文本的卡片从 74px 降到 44px。 */
+.sub-edit {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(10, 16, 26, 0.4);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.sub-edit:focus-within {
+  border-color: rgba(61, 156, 240, 0.55);
+}
+
+/* 高度随内容自适应（JS 按 scrollHeight 撑开），不限制可视行高；滚动交给外层容器 */
+.sub-input {
+  width: 100%;
+  min-height: 30px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 1px 2px 3px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  user-select: text;
+  overflow: hidden;
+}
+
+/* 序号落在左侧 18px 窄列，与文本首行对齐；只做定位参考，不参与交互 */
+.sub-index {
+  min-width: 18px;
+  padding-top: 2px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+/* 工具条：只在「悬停但未进入编辑」时浮现在卡片右上，平时不占高度。
+   正在编辑（光标在输入框里）时隐藏——否则会挡住该段右侧的内容。
+   背景是向左淡出的渐变——盖住的文字是渐隐的，不是被色块切断。 */
+.sub-edit-tools {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+  padding: 2px 2px 2px 10px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, transparent, rgba(14, 21, 33, 0.94) 30%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(3px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+/* 悬停卡片且未进入编辑 → 显示；键盘 Tab 进到工具条本身 → 也显示
+   （不用 visibility，隐藏态仍需保留 Tab 可达性） */
+.sub-edit:hover:not(.is-typing) .sub-edit-tools,
+.sub-edit-tools:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* 卡片内按钮压到 20px，三个按钮共 66px，不挤压正文 */
+.sub-edit-tools .icon-btn {
+  width: 20px;
+  height: 20px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+
+.sub-add-btn {
+  border: 1px dashed rgba(61, 156, 240, 0.45);
+  background: rgba(61, 156, 240, 0.08);
+  color: #b9dcff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.sub-add-btn:hover {
+  background: rgba(61, 156, 240, 0.16);
+}
+
+/* 编辑卡底栏：左 = 组织方式切换，右 = 显示行数，同一行对齐 */
+.blocks.is-expanded .block.is-expanded .subs-editor {
+  flex: 1;
+  min-height: 0;
 }
 
 .placeholder {
@@ -894,6 +1203,7 @@ body.is-reordering .block-content {
 .block-settings {
   display: flex;
   align-items: center;
+  gap: 8px;
   margin-top: 10px;
 }
 

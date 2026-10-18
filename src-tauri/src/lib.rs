@@ -13,6 +13,9 @@ pub struct Block {
     pub content: String,
     #[serde(default = "default_display_lines")]
     pub display_lines: u32,
+    /// 块内子区域（R1）：每段独立的值文本；None = 纯 content 块（v1 数据兼容）
+    #[serde(default)]
+    pub sub_regions: Option<Vec<String>>,
 }
 
 fn default_display_lines() -> u32 {
@@ -55,18 +58,21 @@ impl Default for AppData {
                     title: "Git".into(),
                     content: "git pull origin main".into(),
                     display_lines: 4,
+                    sub_regions: None,
                 },
                 Block {
                     id: "block-docker".into(),
                     title: "Docker".into(),
                     content: "docker compose up -d".into(),
                     display_lines: 4,
+                    sub_regions: None,
                 },
                 Block {
                     id: "block-ssh".into(),
                     title: "SSH".into(),
                     content: "ssh user@server".into(),
                     display_lines: 4,
+                    sub_regions: None,
                 },
             ],
             window: WindowConfig {
