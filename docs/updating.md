@@ -24,9 +24,20 @@ PinBoard 使用 Tauri 2 官方 Updater，通过 GitHub Releases 的 `latest.json
 
 1. 用 `npm version patch --no-git-tag-version`（或指定版本号）提升版本，现有脚本会同步 Rust 版本。
 2. 提交版本文件和变更并推送 GitHub。
-3. Actions → Release → Run workflow，填写用户可读的 `notes` 更新说明。
+3. Actions → Release → Run workflow，填写用户可读的 `notes` 更新说明（必填，没有默认值）。
 4. 工作流构建 Windows NSIS 安装包、签名和 `latest.json` 并上传 Release。
 5. 正式发布时 `draft`、`prerelease` 均关闭。草稿和预发布不通过 `/releases/latest` 分发给正式版用户。
+
+### 发版预检
+
+构建前先跑 `preflight`（Ubuntu，十几秒），任一条不满足就直接失败、不进入构建：
+
+- `package.json` / `Cargo.toml` / `Cargo.lock` 三处版本必须一致（`tauri.conf.json` 固定读 `../package.json`）
+- 同名 tag 已存在且**不指向本次提交**时拒绝。这正是「版本号没 bump 就发版」的成因：tauri-action 按 `v__VERSION__` 找 tag，命中已有 Release 会把它的资产原地覆盖
+- 版本号必须高于所有已发布 tag，避免 `releases/latest` 被旧版本顶回去、更新器读到过期清单
+- 同名 Release 已是正式版则拒绝；同名草稿允许更新（草稿不产生 tag，发布后才出现）
+
+失败原因在日志里以 `::error::` 开头，同时会写一张 `GITHUB_STEP_SUMMARY` 表（版本 / tag / 提交 / 草稿状态），发版前先扫一眼这张表再等构建。
 
 Release 应包含 Windows 安装包、对应 `.sig` 和 `latest.json`。更新说明来自 Release 正文，应用按纯文本显示。
 工作流使用 `scripts/create-updater-manifest.mjs` 生成清单，使用公开 Release 下载直链，避免匿名 GitHub API 额度影响安装包下载。

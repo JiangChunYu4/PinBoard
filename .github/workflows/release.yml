@@ -20,10 +20,91 @@ on:
       notes:
         description: Release notes shown in the app
         type: string
-        default: "性能优化与问题修复。"
+        required: true
 
 jobs:
+  preflight:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: Verify version and release slot
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          VERSION=$(node -p "require('./package.json').version")
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Malformed version in package.json: $VERSION"
+
+          CARGO_VERSION=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/^version = "(.*)"$/\1/')
+          [[ "$CARGO_VERSION" == "$VERSION" ]] \
+            || fail "Version mismatch: package.json=$VERSION / Cargo.toml=$CARGO_VERSION. Commit the sync-version output after bumping."
+
+          LOCK_VERSION=$(awk '/^name = "pinboard"$/{f=1;next} f&&/^version = /{gsub(/[^0-9.]/,"",$0);print;exit}' src-tauri/Cargo.lock)
+          [[ "$LOCK_VERSION" == "$VERSION" ]] \
+            || fail "Version mismatch: package.json=$VERSION / Cargo.lock(pinboard)=$LOCK_VERSION"
+
+          grep -q '"version": "\.\./package.json"' src-tauri/tauri.conf.json \
+            || fail "tauri.conf.json must keep ../package.json as its only version source"
+
+          TAG="v$VERSION"
+          HEAD_SHA=$(git rev-parse HEAD)
+          SHORT=$(git rev-parse --short HEAD)
+
+          # No baseline, no checks: fail rather than silently skip.
+          REMOTE_TAGS=$(git ls-remote --tags origin) \
+            || fail "Failed to read remote tags. Refusing to build without a release baseline."
+
+          TAG_SHA=$(printf '%s\n' "$REMOTE_TAGS" | awk -v t="refs/tags/$TAG^{}" '$2==t{print $1}' | head -1)
+          [ -n "$TAG_SHA" ] || TAG_SHA=$(printf '%s\n' "$REMOTE_TAGS" | awk -v t="refs/tags/$TAG" '$2==t{print $1}' | head -1)
+          if [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+            fail "$TAG was already released at ${TAG_SHA:0:7} but this build is $SHORT. Bump the version before releasing."
+          fi
+
+          # A lower version would push releases/latest back.
+          LATEST=$(printf '%s\n' "$REMOTE_TAGS" | sed -n 's#.*refs/tags/v\([0-9][0-9.]*\)$#\1#p' | sort -V | tail -1)
+          if [[ -n "$LATEST" && "$LATEST" != "$VERSION" ]]; then
+            [[ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -1)" == "$VERSION" ]] \
+              || fail "Version rollback: $VERSION is lower than the latest released version $LATEST"
+          fi
+
+          DRAFT_NOTE="no release with this name"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json 2>/dev/null; then
+            IS_DRAFT=$(node -p "require('./release.json').draft")
+            rm -f release.json
+            [[ "$IS_DRAFT" == "true" ]] \
+              || fail "Release $TAG is already published. It cannot be overwritten even if the local tag is missing."
+            DRAFT_NOTE="matching **draft** exists, updating it (no tag until published)"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release preflight passed"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Version | \`$VERSION\` |"
+            echo "| Tag | \`$TAG\` |"
+            echo "| Commit | \`$SHORT\` $(git log -1 --pretty=%s) |"
+            echo "| Same-name release | $DRAFT_NOTE |"
+            echo "| Draft | ${{ inputs.draft }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish-windows:
+    needs: preflight
     permissions:
       contents: write
     runs-on: windows-latest
@@ -89,6 +170,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ steps.release.outputs.releaseId }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_ID)) {
+            throw "tauri-action did not return a releaseId. Refusing to upload the updater manifest without a release."
+          }
           gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID" --jq '{tag_name, body, published_at, created_at}' > release-info.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/create-updater-manifest.mjs
