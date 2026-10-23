@@ -460,6 +460,7 @@ function renderBlock(block: Block, index: number): string {
     const editingSubs = subsDraft != null ? subsDraft : null;
     // 同一个按钮、同一枚图标，动作名交给气泡：气泡说明「点下去会变成什么」
     const convertLabel = editingSubs ? "转为整段文本" : "转为子区域";
+    const draftCount = formatCharCount(charCount(editingSubs ? editingSubs.join("\n") : block.content));
     return `
       <article class="block editing${expandClass}" data-id="${block.id}" data-index="${index}">
         <div class="block-head">
@@ -475,18 +476,20 @@ function renderBlock(block: Block, index: number): string {
             ? `
         <div class="subs-editor">
           ${editingSubs
-            .map(
-              (text, i) => `
+            .map((text, i) => {
+              const count = formatCharCount(charCount(text));
+              return `
           <div class="sub-edit" data-sub-index="${i}">
             <span class="sub-index" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span>
             <textarea class="sub-input" data-field="sub-input" rows="1" placeholder="子区域内容（可多行），展示时单击即可整段复制">${escapeHtml(text)}</textarea>
+            <span class="sub-count${count.over ? " is-over" : ""}" aria-hidden="true">${count.text}</span>
             <div class="sub-edit-tools">
               <button type="button" class="icon-btn" data-action="sub-up" aria-label="上移" ${i === 0 ? "disabled" : ""}>${ICON_ARROW_UP}${uiTip("上移", "end")}</button>
               <button type="button" class="icon-btn" data-action="sub-down" aria-label="下移" ${i === editingSubs.length - 1 ? "disabled" : ""}>${ICON_ARROW_DOWN}${uiTip("下移", "end")}</button>
               <button type="button" class="icon-btn danger" data-action="sub-del" aria-label="删除该子区域">${ICON_CLOSE}${uiTip("删除该子区域", "end")}</button>
             </div>
-          </div>`,
-            )
+          </div>`;
+            })
             .join("")}
           <button type="button" class="sub-add-btn" data-action="sub-add">＋ 新增子区域</button>
         </div>`
@@ -507,10 +510,14 @@ function renderBlock(block: Block, index: number): string {
             />
             <span class="lines-hint">0=全部</span>
           </label>
+          <span class="char-count${draftCount.over ? " is-over" : ""}" data-field="char-count">${draftCount.text}</span>
         </div>
       </article>
     `;
   }
+
+  // 计数口径 = 复制口径
+  const total = formatCharCount(charCount(blockContentText(block)));
 
   return `
     <article class="block${expandClass}" data-id="${block.id}" data-index="${index}">
@@ -519,6 +526,7 @@ function renderBlock(block: Block, index: number): string {
           <span class="block-title-text">${block.title ? highlightHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
           ${uiTip("复制内容", "start")}
         </button>
+        <span class="block-count${total.over ? " is-over" : ""}" data-field="block-count">${total.text}</span>
         <div class="block-tools">
           ${
             canToggleFold
@@ -554,6 +562,43 @@ function renderSubRegions(block: Block, clamp: boolean, lines: number): string {
         .join("")}
     </div>
   `;
+}
+
+const COMMON_CHAR_LIMITS = [100, 200, 500, 800];
+
+/** 按 code point 计，emoji 不会被算成两个 */
+function charCount(text: string): number {
+  return [...text].length;
+}
+
+/** 统一为 N/上限（斜杠不留空格，省窄窗宽度）；over = 超过最大一档 */
+function formatCharCount(count: number): { text: string; over: boolean } {
+  const max = COMMON_CHAR_LIMITS[COMMON_CHAR_LIMITS.length - 1];
+  const limit = COMMON_CHAR_LIMITS.find((value) => count <= value) ?? max;
+  return { text: `${count}/${limit}`, over: count > max };
+}
+
+function applyCharCount(el: Element | null, count: number) {
+  if (!(el instanceof HTMLElement)) return;
+  const { text, over } = formatCharCount(count);
+  el.textContent = text;
+  el.classList.toggle("is-over", over);
+}
+
+/** 读 DOM 输入值，与保存共用同一份草稿 */
+function refreshEditCounts(root: HTMLElement) {
+  const cards = [...root.querySelectorAll<HTMLElement>(".sub-edit")];
+  if (cards.length > 0) {
+    const texts = cards.map(
+      (card) => card.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]')?.value ?? "",
+    );
+    cards.forEach((card, i) => applyCharCount(card.querySelector(".sub-count"), charCount(texts[i])));
+    // 总数按复制口径拼接
+    applyCharCount(root.querySelector('[data-field="char-count"]'), charCount(texts.join("\n")));
+    return;
+  }
+  const content = root.querySelector<HTMLTextAreaElement>('[data-field="content"]')?.value ?? "";
+  applyCharCount(root.querySelector('[data-field="char-count"]'), charCount(content));
 }
 
 /**
@@ -1037,6 +1082,14 @@ function bindEvents() {
     const id = el.dataset.id!;
     const index = Number(el.dataset.index);
 
+    // 标题不计入，其余改动即时刷新
+    if (el.classList.contains("editing")) {
+      el.addEventListener("input", (e) => {
+        const field = (e.target as HTMLElement | null)?.dataset.field;
+        if (field === "content" || field === "sub-input") refreshEditCounts(el);
+      });
+    }
+
     el.querySelector('[data-action="copy"]')?.addEventListener("click", (e) => {
       if (suppressNextClick) {
         e.preventDefault();
@@ -1153,12 +1206,23 @@ function bindEvents() {
       const subIndex = Number(row.dataset.subIndex);
       if (!Number.isFinite(subIndex)) return;
 
-      // 进入编辑（光标在输入框里）时标记该卡：此时隐藏右上工具条，避免挡住这一段的内容
+      // 编辑中隐藏右上工具条，避免挡住这一段
       row.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]')?.addEventListener("focus", () => {
         row.classList.add("is-typing");
       });
       row.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]')?.addEventListener("blur", () => {
         row.classList.remove("is-typing");
+      });
+
+      // 数字浮层要自己接收指针才能 hover，落上的点击手动转给输入框；
+      // preventDefault 不能省，否则焦点被浮层夺走，刚 focus 的输入框立刻 blur
+      row.querySelector(".sub-count")?.addEventListener("pointerdown", (e) => {
+        const input = row.querySelector<HTMLTextAreaElement>('[data-field="sub-input"]');
+        if (!input) return;
+        e.preventDefault();
+        input.focus();
+        const end = input.value.length;
+        input.setSelectionRange(end, end);
       });
 
       row.querySelector('[data-action="sub-up"]')?.addEventListener("click", () => {
@@ -1207,10 +1271,26 @@ function bindEvents() {
     });
 
     // 子区域：单击整段复制；拖选/双击选词时交还原生 Ctrl+C
+    const countEl = el.querySelector<HTMLElement>('[data-field="block-count"]');
     el.querySelectorAll<HTMLElement>(".block-sub").forEach((sub) => {
       const subIndex = Number(sub.dataset.subIndex);
       if (!Number.isFinite(subIndex)) return;
       let startPt: { x: number; y: number } | null = null;
+
+      // 悬停某段：标题栏改显该段字数（限长的是单个字段）
+      sub.addEventListener("pointerenter", () => {
+        const text = data.blocks.find((b) => b.id === id)?.subRegions?.[subIndex];
+        if (!countEl || text == null) return;
+        applyCharCount(countEl, charCount(text));
+        countEl.classList.add("is-sub");
+      });
+
+      sub.addEventListener("pointerleave", () => {
+        if (!countEl) return;
+        countEl.classList.remove("is-sub");
+        const block = data.blocks.find((b) => b.id === id);
+        if (block) applyCharCount(countEl, charCount(blockContentText(block)));
+      });
 
       sub.addEventListener("pointerdown", (e) => {
         const pe = e as PointerEvent;

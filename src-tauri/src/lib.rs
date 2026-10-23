@@ -13,7 +13,7 @@ pub struct Block {
     pub content: String,
     #[serde(default = "default_display_lines")]
     pub display_lines: u32,
-    /// 块内子区域（R1）：每段独立的值文本；None = 纯 content 块（v1 数据兼容）
+    /// 块内子区域：每段独立的值文本；None = 纯 content 块（v1 数据兼容）
     #[serde(default)]
     pub sub_regions: Option<Vec<String>>,
 }
