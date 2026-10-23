@@ -166,6 +166,8 @@ function flushEditingDraft(): void {
   } else {
     const contentEl = editor.querySelector<HTMLTextAreaElement>('[data-field="content"]');
     if (contentEl) block.content = contentEl.value;
+    // 整段模式下必须清掉子区域，否则保存后仍按 subRegions 判定，又回到子区域模式
+    block.subRegions = undefined;
   }
 
   const linesEl = editor.querySelector<HTMLInputElement>('[data-field="displayLines"]');
