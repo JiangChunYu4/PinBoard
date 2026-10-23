@@ -40,6 +40,10 @@ let toastTimer: number | undefined;
 let dragFromIndex: number | null = null;
 let suppressNextClick = false;
 let copyClickTimer: number | undefined;
+/** 搜索关键词：仅在内存中，不持久化，重启复位 */
+let searchQuery = "";
+/** 全局 Ctrl+F 监听只绑定一次，避免每次 render 重复挂载 */
+let searchHotkeyBound = false;
 
 const updater = createUpdater({
   async save() {
@@ -80,6 +84,9 @@ const ICON_PENCIL = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true
 const ICON_ARROW_UP = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.6M4.5 7.1L8 3.5l3.5 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ICON_ARROW_DOWN = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v9.4M4.5 8.9L8 12.5l3.5-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const ICON_CLOSE = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
+/** 搜索：放大镜，与其余功能图标同一套 stroke 1.5 线性风格 */
+const ICON_SEARCH = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.1 10.1l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
 /** 组织方式切换（整段文本 ↔ 子区域）：两种模式下共用同一枚图标，动作名由气泡说明 */
 const ICON_LAYOUT_SWITCH = `<svg class="icon-svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5h9M9 3l2.5 2.5L9 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 10.5h-9M7 8l-2.5 2.5L7 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -192,6 +199,8 @@ function dropTargetIndexFromPoint(x: number, y: number, fromIndex: number): numb
 }
 
 function startBlockReorder(blockEl: HTMLElement, fromIndex: number, e: PointerEvent) {
+  // 过滤态禁用拖拽：被隐藏的块看不见地挡在中间，换位结果无法预期
+  if (isFiltering()) return;
   const startX = e.clientX;
   const startY = e.clientY;
   const pointerId = e.pointerId;
@@ -381,12 +390,56 @@ function renderMain(): string {
     `;
   }
 
+  const filtering = isFiltering();
+  const entries = filtering ? filteredEntries() : data.blocks.map((block, index) => ({ block, index }));
+
+  let listHtml: string;
+  if (entries.length > 0) {
+    listHtml = entries.map(({ block, index }) => renderBlock(block, index)).join("");
+  } else if (filtering) {
+    listHtml = renderNoResults();
+  } else {
+    listHtml = '<p class="empty">还没有区域，点击上方按钮新增</p>';
+  }
+
   return `
     <div class="toolbar">
       <button type="button" class="add-btn" id="btn-add">＋ 新增区域</button>
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">${ICON_SEARCH}</span>
+        <input
+          id="search-input"
+          class="search-input"
+          type="text"
+          value="${escapeAttr(searchQuery)}"
+          placeholder="搜索区域"
+          aria-label="搜索区域标题或内容"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        ${
+          filtering
+            ? `<button type="button" class="search-clear" id="search-clear" aria-label="清除搜索">${ICON_CLOSE}</button>`
+            : `<kbd class="search-kbd" aria-hidden="true">Ctrl F</kbd>`
+        }
+      </div>
     </div>
-    <div class="blocks">
-      ${data.blocks.map((b, i) => renderBlock(b, i)).join("") || '<p class="empty">还没有区域，点击上方按钮新增</p>'}
+    <div class="blocks${filtering ? " is-filtered" : ""}">
+      ${listHtml}
+    </div>
+  `;
+}
+
+/**
+ * 无结果空态：按「空态要给出路」的原则，不只报数量，
+ * 而是说明匹配范围 + 给一个「清除搜索」的直接动作。
+ */
+function renderNoResults(): string {
+  return `
+    <div class="empty search-empty">
+      <p class="search-empty-title">没有找到包含「${escapeHtml(searchQuery.trim())}」的区域</p>
+      <p class="search-empty-hint">匹配标题与全部内容，不区分大小写；多个关键词用空格分隔</p>
+      <button type="button" class="search-empty-clear" id="search-clear-empty">清除搜索</button>
     </div>
   `;
 }
@@ -463,7 +516,7 @@ function renderBlock(block: Block, index: number): string {
     <article class="block${expandClass}" data-id="${block.id}" data-index="${index}">
       <div class="block-head">
         <button type="button" class="block-title" data-action="copy" aria-label="复制内容；Ctrl+点击复制标题">
-          <span class="block-title-text">${block.title ? escapeHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
+          <span class="block-title-text">${block.title ? highlightHtml(block.title) : '<span class="title-placeholder">未命名</span>'}</span>
           ${uiTip("复制内容", "start")}
         </button>
         <div class="block-tools">
@@ -479,7 +532,7 @@ function renderBlock(block: Block, index: number): string {
       ${
         hasSubs
           ? renderSubRegions(block, showClamp, lines)
-          : `<pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${escapeHtml(block.content) || '<span class="placeholder">点右上「编辑」按钮；拖动标题可排序</span>'}</pre>`
+          : `<pre class="block-content${showClamp ? " is-clamped" : ""}"${showClamp ? ` style="--display-lines: ${lines}"` : ""}>${highlightHtml(block.content) || '<span class="placeholder">点右上「编辑」按钮；拖动标题可排序</span>'}</pre>`
       }
     </article>
   `;
@@ -495,7 +548,7 @@ function renderSubRegions(block: Block, clamp: boolean, lines: number): string {
       ${subs
         .map(
           (text, i) => `
-        <pre class="block-sub" data-sub-index="${i}">${escapeHtml(text)}</pre>
+        <pre class="block-sub" data-sub-index="${i}">${highlightHtml(text)}</pre>
         `,
         )
         .join("")}
@@ -511,6 +564,80 @@ function renderSubRegions(block: Block, clamp: boolean, lines: number): string {
  */
 function blockContentText(block: Block): string {
   return block.subRegions?.length ? block.subRegions.join("\n") : block.content;
+}
+
+/**
+ * 搜索匹配：标题 + 内容（含全部子区域），大小写不敏感。
+ * 关键词按空白拆成多个词，要求全部命中（AND）——「实习 字节」比单字更精准，
+ * 而单个关键词的行为与直觉一致。纯结构匹配，不做拼音/模糊/语义扩展。
+ */
+function blockMatchesQuery(block: Block, query: string): boolean {
+  const terms = searchTerms(query);
+  if (terms.length === 0) return true;
+  const haystack = `${block.title}\n${blockContentText(block)}`.toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+/** 关键词列表：按空白拆分并小写；空查询返回空数组（= 不过滤） */
+function searchTerms(query = searchQuery): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+/**
+ * 命中片段高亮：把匹配到的子串包成 <mark class="hl">。
+ * 每个文本片段单独转义后再拼接 HTML，原文里的标签不会被当标记执行。
+ * 多个关键词的命中区间先合并再输出，避免重叠关键词产生嵌套 <mark>。
+ */
+function highlightHtml(text: string): string {
+  if (!text || !isFiltering()) return escapeHtml(text);
+
+  const lower = text.toLowerCase();
+  // 少数语言 toLowerCase 会改变长度（如土耳其 İ），偏移即不可信：退回纯转义
+  if (lower.length !== text.length) return escapeHtml(text);
+
+  const ranges: [number, number][] = [];
+  for (const term of searchTerms()) {
+    let from = 0;
+    for (;;) {
+      const at = lower.indexOf(term, from);
+      if (at < 0) break;
+      ranges.push([at, at + term.length]);
+      from = at + term.length;
+    }
+  }
+  if (ranges.length === 0) return escapeHtml(text);
+
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push([range[0], range[1]]);
+  }
+
+  let html = "";
+  let cursor = 0;
+  for (const [start, end] of merged) {
+    html += escapeHtml(text.slice(cursor, start));
+    html += `<mark class="hl">${escapeHtml(text.slice(start, end))}</mark>`;
+    cursor = end;
+  }
+  return html + escapeHtml(text.slice(cursor));
+}
+
+/**
+ * 过滤后的块列表，保留原始索引（拖拽排序 / 删除都依赖 data.blocks 的下标）。
+ * 过滤态下拖拽被禁用，因此不会出现「跨隐藏块换位」的歧义结果。
+ */
+function filteredEntries(): { block: Block; index: number }[] {
+  return data.blocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => blockMatchesQuery(block, searchQuery));
+}
+
+/** 搜索状态：去掉首尾空白后有内容才算处于过滤中 */
+function isFiltering(): boolean {
+  return searchQuery.trim().length > 0;
 }
 
 /** 空行是用户主动分段的最强信号：任何一行 trimmed 为空即视为存在分段意图 */
@@ -558,7 +685,15 @@ function rememberListScroll() {
   listScrollSnapshot = document.querySelector<HTMLElement>(".blocks")?.scrollTop ?? 0;
 }
 
-function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string | null } = {}) {
+function render(
+  options: {
+    scrollBlocksToTop?: boolean;
+    ensureVisibleId?: string | null;
+    /** 重建后把焦点还给搜索框并恢复光标（输入过滤时用） */
+    focusSearch?: boolean;
+    caret?: number;
+  } = {},
+) {
   const prevScroll = document.querySelector<HTMLElement>(".blocks")?.scrollTop ?? 0;
 
   app.innerHTML = `
@@ -578,6 +713,16 @@ function render(options: { scrollBlocksToTop?: boolean; ensureVisibleId?: string
   syncCopyTips();
   autoGrowSubInputs();
   markTruncatedBlocks();
+
+  // 全量重建会销毁输入框：输入过滤时把焦点与光标位置还原，否则每敲一个字就丢焦点
+  if (options.focusSearch) {
+    const input = document.querySelector<HTMLInputElement>("#search-input");
+    if (input) {
+      input.focus({ preventScroll: true });
+      const pos = options.caret ?? input.value.length;
+      input.setSelectionRange(pos, pos);
+    }
+  }
 
   const blocksEl = document.querySelector<HTMLElement>(".blocks");
   if (!blocksEl) return;
@@ -818,15 +963,70 @@ function bindSettingsEvents() {
   });
 }
 
+/**
+ * 搜索框交互。两个必须照顾的细节：
+ * 1. 全量 render 会销毁输入框，所以每次过滤都要把焦点与光标还回去；
+ * 2. 中文/日文输入法组合期间不能重建 DOM，否则拼音会被打断——靠 isComposing 拦，
+ *    再用 compositionend 兜底（此时值已定稿）。
+ */
+function bindSearchEvents() {
+  const input = document.querySelector<HTMLInputElement>("#search-input");
+  if (!input) return;
+
+  const apply = (value: string, caret: number) => {
+    // 值相同不重建：IME 的 compositionend 与 input 可能连续触发同一值
+    if (value === searchQuery) return;
+    searchQuery = value;
+    render({ scrollBlocksToTop: true, focusSearch: true, caret });
+  };
+
+  const fromDOM = () => apply(input.value, input.selectionStart ?? input.value.length);
+
+  input.addEventListener("input", (e) => {
+    if ((e as InputEvent).isComposing) return;
+    fromDOM();
+  });
+  input.addEventListener("compositionend", fromDOM);
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isFiltering()) {
+      e.preventDefault();
+      apply("", 0);
+    }
+  });
+
+  document.querySelector("#search-clear")?.addEventListener("click", () => apply("", 0));
+  document.querySelector("#search-clear-empty")?.addEventListener("click", () => apply("", 0));
+}
+
+/** Ctrl+F（应用内）：聚焦搜索框并全选，便于直接覆盖输入。设置页/编辑态无搜索框则不拦截。 */
+function bindSearchHotkey() {
+  if (searchHotkeyBound) return;
+  searchHotkeyBound = true;
+  window.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
+    const input = document.querySelector<HTMLInputElement>("#search-input");
+    if (!input) return;
+    e.preventDefault();
+    input.focus();
+    input.select();
+  });
+}
+
 function bindEvents() {
   bindWindowChrome();
+  bindSearchHotkey();
 
   if (currentView === "settings") {
     bindSettingsEvents();
     return;
   }
 
+  bindSearchEvents();
+
   document.querySelector("#btn-add")?.addEventListener("click", async () => {
+    // 过滤中新增：先清空搜索。否则新块若不匹配当前关键词会立刻从列表消失，像没建成
+    searchQuery = "";
     const block = createBlock("", "", data.window.defaultDisplayLines);
     data.blocks.unshift(block);
     await persist();
