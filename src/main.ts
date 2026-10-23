@@ -910,6 +910,8 @@ function bindWindowChrome() {
   document.querySelector("#btn-close")?.addEventListener("click", async () => {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      // 拖完立刻关窗时 debounce 还没触发，这里补记一次
+      await rememberWindowBounds();
       await getCurrentWindow().close();
     } catch {
       window.close();
@@ -1394,18 +1396,23 @@ function shortenPath(path: string, max = 44): string {
   return `${path.slice(0, keep)}...${path.slice(-keep)}`;
 }
 
-async function rememberWindowSize() {
+async function rememberWindowBounds() {
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
+    // 最小化时系统会把窗口挪到屏幕外，写进配置下次就开在看不见的地方
+    if (await win.isMinimized()) return;
     const factor = await win.scaleFactor();
     const physical = await win.innerSize();
     const width = Math.round(physical.width / factor);
     const height = Math.round(physical.height / factor);
-    // 避免最小化/异常尺寸被写进配置，导致下次只剩标题栏
+    // 异常尺寸不写，否则下次只剩标题栏
     if (width < 300 || height < 200) return;
+    const position = await win.outerPosition();
     data.window.width = width;
     data.window.height = height;
+    data.window.x = position.x;
+    data.window.y = position.y;
     await persist();
   } catch {
     /* browser preview */
@@ -1420,6 +1427,8 @@ async function boot() {
     if (!data.window) data.window = structuredClone(DEFAULT_DATA.window);
     data.window.width = Math.max(300, data.window.width || 360);
     data.window.height = Math.max(360, data.window.height || 520);
+    data.window.x = Number.isFinite(data.window.x) ? data.window.x : undefined;
+    data.window.y = Number.isFinite(data.window.y) ? data.window.y : undefined;
     data.window.opacity = Math.min(1, Math.max(0.4, data.window.opacity || 0.96));
     data.window.launchOnStartup = Boolean(data.window.launchOnStartup);
     data.window.clickThrough = Boolean(data.window.clickThrough);
@@ -1436,13 +1445,15 @@ async function boot() {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
-      let resizeTimer: number | undefined;
-      await win.onResized(() => {
-        window.clearTimeout(resizeTimer);
-        resizeTimer = window.setTimeout(() => {
-          void rememberWindowSize();
+      let boundsTimer: number | undefined;
+      const rememberBounds = () => {
+        window.clearTimeout(boundsTimer);
+        boundsTimer = window.setTimeout(() => {
+          void rememberWindowBounds();
         }, 400);
-      });
+      };
+      await win.onResized(rememberBounds);
+      await win.onMoved(rememberBounds);
     } catch {
       /* browser preview */
     }

@@ -31,6 +31,11 @@ fn default_new_block_display_lines() -> u32 {
 pub struct WindowConfig {
     pub width: f64,
     pub height: f64,
+    /// 窗口左上角物理像素坐标；None = 尚未记录（首次启动）
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
     pub opacity: f64,
     pub always_on_top: bool,
     #[serde(default)]
@@ -78,6 +83,8 @@ impl Default for AppData {
             window: WindowConfig {
                 width: 360.0,
                 height: 520.0,
+                x: None,
+                y: None,
                 opacity: 0.96,
                 always_on_top: true,
                 launch_on_startup: false,
@@ -368,6 +375,36 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
         .map_err(|e| format!("复制失败: {e}"))
+}
+
+/// 位置是否落在任一显示器内。拔掉副屏后旧坐标指向不存在的区域，必须放弃恢复，
+/// 否则窗口开到屏幕外就再也找不回来。
+fn position_on_screen(x: i32, y: i32, monitors: &[(i32, i32, u32, u32)]) -> bool {
+    monitors.iter().any(|&(mx, my, mw, mh)| {
+        x >= mx && x < mx.saturating_add(mw as i32) && y >= my && y < my.saturating_add(mh as i32)
+    })
+}
+
+fn restore_window_position(window: &tauri::WebviewWindow, x: f64, y: f64) {
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
+    let bounds: Vec<(i32, i32, u32, u32)> = monitors
+        .iter()
+        .map(|m| {
+            let pos = m.position();
+            let size = m.size();
+            (pos.x, pos.y, size.width, size.height)
+        })
+        .collect();
+    let to_i32 = |v: f64| v.clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    if bounds.is_empty() || !position_on_screen(to_i32(x), to_i32(y), &bounds) {
+        return;
+    }
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+        to_i32(x),
+        to_i32(y),
+    )));
 }
 
 #[tauri::command]
@@ -731,6 +768,9 @@ pub fn run() {
                 let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
                 let _ = window.set_always_on_top(data.window.always_on_top);
                 let _ = window.set_ignore_cursor_events(data.window.click_through);
+                if let (Some(x), Some(y)) = (data.window.x, data.window.y) {
+                    restore_window_position(&window, x, y);
+                }
             }
 
             {
@@ -753,4 +793,58 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running PinBoard");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::position_on_screen;
+
+    const SINGLE: [(i32, i32, u32, u32); 1] = [(0, 0, 1920, 1080)];
+    const DUAL: [(i32, i32, u32, u32); 2] = [(0, 0, 1920, 1080), (1920, 0, 2560, 1440)];
+
+    #[test]
+    fn accepts_position_inside_primary_screen() {
+        assert!(position_on_screen(0, 0, &SINGLE));
+        assert!(position_on_screen(100, 100, &SINGLE));
+    }
+
+    #[test]
+    fn accepts_position_inside_secondary_screen() {
+        assert!(position_on_screen(2500, 300, &DUAL));
+        // 主副屏接缝处落在副屏内
+        assert!(position_on_screen(1920, 100, &DUAL));
+    }
+
+    #[test]
+    fn rejects_position_after_secondary_removed() {
+        assert!(!position_on_screen(2500, 300, &SINGLE));
+    }
+
+    #[test]
+    fn rejects_position_outside_screen() {
+        assert!(!position_on_screen(-200, 100, &SINGLE));
+        assert!(!position_on_screen(1920, 100, &SINGLE));
+        assert!(!position_on_screen(100, 1080, &SINGLE));
+    }
+
+    #[test]
+    fn rejects_when_no_monitors_reported() {
+        assert!(!position_on_screen(10, 10, &[]));
+    }
+
+    #[test]
+    fn window_config_without_position_still_loads() {
+        let raw = r#"{"width":360.0,"height":520.0,"opacity":0.96,"alwaysOnTop":true}"#;
+        let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(cfg.x, None);
+        assert_eq!(cfg.y, None);
+    }
+
+    #[test]
+    fn window_config_reads_saved_position() {
+        let raw = r#"{"width":360.0,"height":520.0,"x":-1200.0,"y":340.0,"opacity":0.96,"alwaysOnTop":true}"#;
+        let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(cfg.x, Some(-1200.0));
+        assert_eq!(cfg.y, Some(340.0));
+    }
 }

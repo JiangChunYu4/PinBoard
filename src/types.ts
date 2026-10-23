@@ -14,6 +14,9 @@ export interface Block {
 export interface WindowConfig {
   width: number;
   height: number;
+  /** 窗口左上角物理像素坐标（与尺寸的逻辑像素不同，直接对齐外层位置 API）；未记录时省略 */
+  x?: number;
+  y?: number;
   opacity: number;
   alwaysOnTop: boolean;
   /** Windows 开机自动启动 */
