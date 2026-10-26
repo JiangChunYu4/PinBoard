@@ -312,6 +312,80 @@ body {
   background: rgba(61, 156, 240, 0.18);
 }
 
+/* ---- 最近复制：顶部动态分区，无记录时不占位 ---- */
+.recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(61, 156, 240, 0.26);
+  border-radius: 12px;
+  background: rgba(61, 156, 240, 0.07);
+}
+
+/* 作者样式里的 display:flex 会压过 UA 的 [hidden]，必须显式声明 */
+.recent[hidden] {
+  display: none;
+}
+
+.recent-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: copy;
+  /* 允许拖选文字后 Ctrl+C；单击复制改由 pointerup 判断，拖选不会误触发 */
+  user-select: text;
+  -webkit-user-select: text;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* 与子区域同款悬停反馈：底色 + 左侧强调条 */
+.recent-item:hover {
+  background: rgba(61, 156, 240, 0.14);
+  box-shadow: inset 2px 0 0 rgba(61, 156, 240, 0.75);
+}
+
+.recent-item:active {
+  background: rgba(61, 156, 240, 0.2);
+  box-shadow: inset 2px 0 0 rgba(61, 156, 240, 0.75);
+}
+
+/* 按住 Ctrl 时点条目改为只复制标题，光标相应换成手型 */
+body.is-ctrl .recent-item {
+  cursor: pointer;
+}
+
+/* 左侧是识别用的来源，右侧是内容首行预览；两者都可省略，不撑破窄窗。
+   label 不参与收缩（flex-shrink: 0）：一旦参与，预览越长它被压得越狠，
+   最后连省略号都放不下，只剩半个汉字。超长靠 max-width 截断。 */
+.recent-label {
+  flex: 0 0 auto;
+  max-width: 52%;
+  overflow: hidden;
+  color: #b9dcff;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 命中词高亮：只加底色、不加内边距/字号，避免改变折行与限行裁切的测量
    （圆角与底色需要随换行分段生效，所以加 box-decoration-break: clone）
    蓝底压到 0.55 并配纯白字：与正文对比约 4.7:1，够抢眼又不至于糊在底上；

@@ -46,12 +46,33 @@ pub struct WindowConfig {
     /// 新建区域时的默认显示行数；0 表示显示全部
     #[serde(default = "default_new_block_display_lines")]
     pub default_display_lines: u32,
+    /// 顶部「最近复制」分区开关
+    #[serde(default = "default_true")]
+    pub show_recent: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// 最近复制条目：与区域数据一同落盘（最多 5 条，截断由前端负责）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentCopy {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppData {
     pub blocks: Vec<Block>,
     pub window: WindowConfig,
+    #[serde(default)]
+    pub recent: Vec<RecentCopy>,
 }
 
 impl Default for AppData {
@@ -90,7 +111,9 @@ impl Default for AppData {
                 launch_on_startup: false,
                 click_through: false,
                 default_display_lines: 4,
+                show_recent: true,
             },
+            recent: Vec::new(),
         }
     }
 }
@@ -846,5 +869,35 @@ mod tests {
         let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(cfg.x, Some(-1200.0));
         assert_eq!(cfg.y, Some(340.0));
+    }
+
+    #[test]
+    fn app_data_without_recent_still_loads() {
+        let raw = r#"{"blocks":[],"window":{"width":360.0,"height":520.0,"opacity":0.96,"alwaysOnTop":true}}"#;
+        let data: super::AppData = serde_json::from_str(raw).unwrap();
+        assert!(data.recent.is_empty());
+    }
+
+    #[test]
+    fn recent_copy_tolerates_missing_fields() {
+        let raw = r#"[{"text":"北京大学","label":"教育经历"},{"title":"项目经历"}]"#;
+        let items: Vec<super::RecentCopy> = serde_json::from_str(raw).unwrap();
+        assert_eq!(items[0].label, "教育经历");
+        assert_eq!(items[0].title, "");
+        assert_eq!(items[1].text, "");
+        assert_eq!(items[1].title, "项目经历");
+    }
+
+    #[test]
+    fn app_data_round_trip_keeps_recent_and_toggle() {
+        let raw = r#"{"blocks":[],"window":{"width":360.0,"height":520.0,"opacity":0.96,"alwaysOnTop":true,"showRecent":false},"recent":[{"text":"a","label":"b","title":"c"}]}"#;
+        let data: super::AppData = serde_json::from_str(raw).unwrap();
+        assert!(!data.window.show_recent);
+        assert_eq!(data.recent.len(), 1);
+
+        let written = serde_json::to_string(&data).unwrap();
+        let loaded: super::AppData = serde_json::from_str(&written).unwrap();
+        assert!(!loaded.window.show_recent);
+        assert_eq!(loaded.recent[0].title, "c");
     }
 }

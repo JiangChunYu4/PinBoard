@@ -1,6 +1,6 @@
 import "./styles.css";
 import { createUpdater } from "./updater";
-import type { AppData, Block } from "./types";
+import type { AppData, Block, RecentCopy } from "./types";
 import {
   clampDisplayLines,
   createBlock,
@@ -17,7 +17,7 @@ import {
   getDataPathInfo,
   loadData,
   resetDataFilePath,
-  saveBlocks,
+  saveData,
   setClickThroughPaused,
   setLaunchOnStartup,
   type DataPathInfo,
@@ -44,6 +44,10 @@ let copyClickTimer: number | undefined;
 let searchQuery = "";
 /** 全局 Ctrl+F 监听只绑定一次，避免每次 render 重复挂载 */
 let searchHotkeyBound = false;
+
+/** 最近复制：最多 5 条，随区域数据一起持久化 */
+const RECENT_COPIES_LIMIT = 5;
+const recentCopies: RecentCopy[] = [];
 
 const updater = createUpdater({
   async save() {
@@ -115,16 +119,22 @@ function bindCopyTipChrome() {
   if (copyTipChromeBound) return;
   copyTipChromeBound = true;
 
-  const refresh = (e?: KeyboardEvent) => {
-    const next = e ? e.ctrlKey : false;
-    if (ctrlHeld === next && e) return;
+  const apply = (next: boolean, force = false) => {
+    if (ctrlHeld === next && !force) return;
     ctrlHeld = next;
-    syncCopyTips(ctrlHeld);
+    document.body.classList.toggle("is-ctrl", next);
+    syncCopyTips(next);
   };
 
-  window.addEventListener("keydown", refresh, true);
-  window.addEventListener("keyup", refresh, true);
-  window.addEventListener("blur", () => refresh());
+  window.addEventListener("keydown", (e) => apply(e.ctrlKey), true);
+  window.addEventListener("keyup", (e) => apply(e.ctrlKey), true);
+  window.addEventListener("blur", () => apply(false, true));
+  // 窗口失焦时收不到按键，靠指针移动携带的修饰键状态补上
+  document.addEventListener(
+    "pointermove",
+    (e) => apply(e.ctrlKey),
+    true,
+  );
 }
 
 function showToast(message: string) {
@@ -143,8 +153,13 @@ function applyPanelOpacity(value: number) {
   if (shell) shell.style.setProperty("--panel-opacity", String(alpha));
 }
 
+/** 串行写入：复制与开关可能紧挨着触发，避免先发起的旧数据后落盘 */
+let saveQueue: Promise<unknown> = Promise.resolve();
+
 async function persist() {
-  await saveBlocks(data.blocks, data.window);
+  const next = saveQueue.then(() => saveData(data));
+  saveQueue = next.catch(() => {});
+  await next;
 }
 
 /** 把编辑态 DOM 里的最新输入刷回 data（不持久化）；保存与结构操作前调用，避免重渲染丢输入 */
@@ -362,6 +377,18 @@ function renderSettings(): string {
             <button type="button" class="setting-btn icon" id="btn-apply-default-lines" aria-label="应用到全部">${ICON_APPLY_ALL}${uiTip("应用到全部", "end")}</button>
           </div>
         </div>
+        <label class="setting-row setting-row-clickable" for="recent-toggle">
+          <div class="setting-meta">
+            <span class="setting-name">最近复制</span>
+            <span class="setting-desc">顶部显示最近复制的内容，点击即可再次复制；关闭只是隐藏分区，记录会保留</span>
+          </div>
+          <div class="setting-control">
+            <span class="switch">
+              <input type="checkbox" id="recent-toggle" ${data.window.showRecent ? "checked" : ""} />
+              <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+            </span>
+          </div>
+        </label>
         <div class="setting-row setting-row-stack">
           <div class="setting-meta">
             <span class="setting-name">数据文件路径</span>
@@ -378,6 +405,75 @@ function renderSettings(): string {
       </div>
     </div>
   `;
+}
+
+/** 分区条目的识别文本：块标题，子区域再带上段号 */
+function copySourceLabel(block: Block, subIndex?: number): string {
+  const title = block.title.trim() || "未命名";
+  return subIndex == null ? title : `${title} · ${String(subIndex + 1).padStart(2, "0")}`;
+}
+
+/** 条目右侧预览：首个非空行，内部空白折成单空格 */
+function previewLine(text: string): string {
+  const line = text.split("\n").find((part) => part.trim().length > 0) ?? "";
+  return line.trim().replace(/\s+/g, " ");
+}
+
+function renderRecentItem(item: RecentCopy, index: number): string {
+  return `
+        <button type="button" class="recent-item" data-recent-index="${index}" aria-label="复制：${escapeAttr(item.label)}">
+          <span class="recent-label">${escapeHtml(item.label)}</span>
+          <span class="recent-text">${escapeHtml(previewLine(item.text))}</span>
+        </button>`;
+}
+
+function renderRecent(): string {
+  if (!data.window.showRecent) return "";
+  return `
+    <section class="recent" id="recent" aria-label="最近复制"${recentCopies.length === 0 ? " hidden" : ""}>
+      <div class="recent-list">${recentCopies.map(renderRecentItem).join("")}</div>
+    </section>
+  `;
+}
+
+/** 同文本去重后提到最前；只换分区内部，不重渲染整个列表，避免丢滚动位置与复制反馈 */
+function rememberCopy(text: string, label: string, title: string) {
+  if (!text.trim()) return;
+  const existing = recentCopies.findIndex((item) => item.text === text);
+  if (existing >= 0) recentCopies.splice(existing, 1);
+  recentCopies.unshift({ text, label, title });
+  recentCopies.length = Math.min(recentCopies.length, RECENT_COPIES_LIMIT);
+  refreshRecent();
+  void persist();
+}
+
+function refreshRecent() {
+  const section = document.querySelector<HTMLElement>("#recent");
+  const list = section?.querySelector<HTMLElement>(".recent-list");
+  if (!section || !list) return;
+  list.innerHTML = recentCopies.map(renderRecentItem).join("");
+  section.hidden = recentCopies.length === 0;
+}
+
+/** 条目复制：默认复制内容，copyTitle 时只复制来源区域标题（不带段号） */
+function copyRecentEntry(entry: RecentCopy, copyTitle: boolean, anchor: HTMLElement) {
+  void (async () => {
+    try {
+      if (copyTitle) {
+        if (!entry.title.trim()) {
+          showToast("暂无标题");
+          return;
+        }
+        await copyText(entry.title);
+        showCopiedTip(anchor, "已复制标题");
+        return;
+      }
+      await copyText(entry.text);
+      showCopiedTip(anchor);
+    } catch {
+      showToast("复制失败");
+    }
+  })();
 }
 
 function renderMain(): string {
@@ -426,6 +522,7 @@ function renderMain(): string {
         }
       </div>
     </div>
+    ${filtering ? "" : renderRecent()}
     <div class="blocks${filtering ? " is-filtered" : ""}">
       ${listHtml}
     </div>
@@ -988,6 +1085,12 @@ function bindSettingsEvents() {
     );
   });
 
+  document.querySelector("#recent-toggle")?.addEventListener("change", async (e) => {
+    data.window.showRecent = (e.target as HTMLInputElement).checked;
+    // 只切换显隐：记录继续保留、继续累积，重新打开时原样回来
+    await persist();
+  });
+
   document.querySelector("#btn-data-path-change")?.addEventListener("click", async () => {
     try {
       dataPathInfo = await chooseDataFilePath(data);
@@ -1082,6 +1185,51 @@ function bindEvents() {
     enterEdit(block.id, { scrollBlocksToTop: true });
   });
 
+  // 条目：单击复制内容，Ctrl+单击复制所属区域标题（不带段号）；拖选文字交给原生 Ctrl+C
+  let recentDown: { x: number; y: number; item: HTMLElement } | null = null;
+
+  document.querySelector("#recent")?.addEventListener("pointerdown", (e) => {
+    const pe = e as PointerEvent;
+    const item = (e.target as HTMLElement | null)?.closest<HTMLElement>(".recent-item");
+    if (!item || pe.button !== 0) return;
+    recentDown = { x: pe.clientX, y: pe.clientY, item };
+  });
+
+  document.querySelector("#recent")?.addEventListener("pointerup", (e) => {
+    const pe = e as PointerEvent;
+    const down = recentDown;
+    recentDown = null;
+    if (!down || pe.button !== 0) return;
+    // 拖出去是选文字，不是点击
+    if (Math.hypot(pe.clientX - down.x, pe.clientY - down.y) >= SUB_CLICK_TOLERANCE) return;
+
+    const entry = recentCopies[Number(down.item.dataset.recentIndex)];
+    if (!entry) return;
+    const copyTitle = pe.ctrlKey;
+    window.clearTimeout(copyClickTimer);
+
+    const runCopy = () => {
+      // 双击选词后选区还在，这次点击是选字不是复制
+      if (window.getSelection()?.toString()) return;
+      copyRecentEntry(entry, copyTitle, down.item);
+    };
+
+    if (copyTitle) runCopy();
+    else copyClickTimer = window.setTimeout(runCopy, COPY_CLICK_DELAY);
+  });
+
+  // 键盘激活（Tab 到条目后回车/空格）走同一套逻辑
+  document.querySelector("#recent")?.addEventListener("keydown", (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key !== "Enter" && ke.key !== " ") return;
+    const item = (e.target as HTMLElement | null)?.closest<HTMLElement>(".recent-item");
+    if (!item) return;
+    e.preventDefault();
+    const entry = recentCopies[Number(item.dataset.recentIndex)];
+    if (!entry) return;
+    copyRecentEntry(entry, ke.ctrlKey, item);
+  });
+
   document.querySelectorAll<HTMLElement>(".block").forEach((el) => {
     const id = el.dataset.id!;
     const index = Number(el.dataset.index);
@@ -1111,8 +1259,10 @@ function bindEvents() {
             showToast("暂无标题");
             return;
           }
+          const text = copyTitle ? block.title : blockContentText(block);
           try {
-            await copyText(copyTitle ? block.title : blockContentText(block));
+            await copyText(text);
+            if (!copyTitle) rememberCopy(text, copySourceLabel(block), block.title);
             const tip = el.querySelector<HTMLElement>('[data-action="copy"] .ui-tip');
             if (tip) {
               tip.textContent = copyTitle ? "已复制标题" : "已复制内容";
@@ -1319,6 +1469,8 @@ function bindEvents() {
             if (!block || text == null) return;
             try {
               await copyText(text);
+              // 先记录：分区从无到有会把列表下推，气泡要按推完后的位置落点
+              rememberCopy(text, copySourceLabel(block, subIndex), block.title);
               flashSubCopied(sub);
             } catch {
               showToast("复制失败");
@@ -1351,11 +1503,11 @@ let copiedTip: HTMLElement | null = null;
  * 一次性「已复制」气泡：挂到 body 用 fixed 定位，浮在被复制行的下方。
  * 挂在行内会被限行容器的 overflow:hidden 裁掉，也会遮住这一行的内容——两个都不接受。
  */
-function showCopiedTip(sub: HTMLElement) {
+function showCopiedTip(sub: HTMLElement, text = "已复制") {
   copiedTip?.remove();
   const tip = document.createElement("span");
   tip.className = "ui-tip tip-start is-success is-floating";
-  tip.textContent = "已复制";
+  tip.textContent = text;
   document.body.appendChild(tip);
   copiedTip = tip;
 
@@ -1435,6 +1587,13 @@ async function boot() {
     data.window.defaultDisplayLines = clampDisplayLines(
       data.window.defaultDisplayLines ?? DEFAULT_DISPLAY_LINES,
     );
+    data.window.showRecent = data.window.showRecent !== false;
+    // 手改过或来自旧版本的数据同样只取前 5 条，空文本直接丢弃
+    for (const item of data.recent ?? []) {
+      if (recentCopies.length >= RECENT_COPIES_LIMIT) break;
+      if (!item?.text?.trim()) continue;
+      recentCopies.push({ text: item.text, label: item.label ?? "", title: item.title ?? "" });
+    }
     try {
       dataPathInfo = await getDataPathInfo();
     } catch {
@@ -1462,6 +1621,8 @@ async function boot() {
     data = structuredClone(DEFAULT_DATA);
   }
   bindCopyTipChrome();
+  // 分区与 data 共用同一个数组，任何一次保存都带着最新的最近复制
+  data.recent = recentCopies;
   // 窗口尺寸变化后子区域编辑框需重算高度，避免撑高不足导致内容被裁
   window.addEventListener("resize", autoGrowSubInputs);
   render();

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppData, Block, WindowConfig } from "./types";
+import type { AppData, WindowConfig } from "./types";
 import { DEFAULT_DATA } from "./types";
 
 const isTauri = () =>
@@ -70,8 +70,4 @@ export async function resetDataFilePath(data: AppData): Promise<DataPathInfo> {
     return { path: "浏览器本地存储", isDefault: true };
   }
   return invoke<DataPathInfo>("reset_data_file_path", { data });
-}
-
-export async function saveBlocks(blocks: Block[], window: WindowConfig): Promise<void> {
-  await saveData({ blocks, window });
 }

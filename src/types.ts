@@ -25,11 +25,23 @@ export interface WindowConfig {
   clickThrough: boolean;
   /** 新建区域时的默认显示行数；0 表示显示全部 */
   defaultDisplayLines: number;
+  /** 顶部「最近复制」分区开关 */
+  showRecent: boolean;
+}
+
+/** 最近复制条目：与区域数据一同落盘，重启后原样恢复 */
+export interface RecentCopy {
+  text: string;
+  /** 条目标签：标题，或「标题 · 01」 */
+  label: string;
+  /** 来源区域的标题，Ctrl+单击时复制它（不带段号） */
+  title: string;
 }
 
 export interface AppData {
   blocks: Block[];
   window: WindowConfig;
+  recent?: RecentCopy[];
 }
 
 export const DEFAULT_DISPLAY_LINES = 4;
@@ -65,6 +77,7 @@ export const DEFAULT_DATA: AppData = {
     launchOnStartup: false,
     clickThrough: false,
     defaultDisplayLines: DEFAULT_DISPLAY_LINES,
+    showRecent: true,
   },
 };
 
