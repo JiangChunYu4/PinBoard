@@ -326,7 +326,6 @@ function renderSettings(): string {
         <div class="setting-row">
           <div class="setting-meta">
             <span class="setting-name">面板透明度</span>
-            <span class="setting-desc">调节面板背景透明度，不挡视线</span>
           </div>
           <div class="setting-control">
             <input type="range" id="opacity-range" min="40" max="100" value="${opacityPct}" aria-label="面板透明度" />
@@ -336,7 +335,6 @@ function renderSettings(): string {
         <label class="setting-row setting-row-clickable" for="startup-toggle">
           <div class="setting-meta">
             <span class="setting-name">开机启动</span>
-            <span class="setting-desc">登录 Windows 后自动运行 PinBoard</span>
           </div>
           <div class="setting-control">
             <span class="switch">
@@ -348,7 +346,6 @@ function renderSettings(): string {
         <label class="setting-row setting-row-clickable" for="click-through-toggle">
           <div class="setting-meta">
             <span class="setting-name">鼠标穿透</span>
-            <span class="setting-desc">主界面内容区点击穿透；设置页内仍可正常操作</span>
           </div>
           <div class="setting-control">
             <span class="switch">
@@ -360,7 +357,6 @@ function renderSettings(): string {
         <div class="setting-row">
           <div class="setting-meta">
             <span class="setting-name">默认显示行数</span>
-            <span class="setting-desc">新建区域初始行数；可一键覆盖到全部已有区域</span>
           </div>
           <div class="setting-control">
             <input
@@ -380,7 +376,7 @@ function renderSettings(): string {
         <label class="setting-row setting-row-clickable" for="recent-toggle">
           <div class="setting-meta">
             <span class="setting-name">最近复制</span>
-            <span class="setting-desc">顶部显示最近复制的内容，点击即可再次复制；关闭只是隐藏分区，记录会保留</span>
+            <span class="setting-desc">顶部显示最近复制的内容，点击即可再次复制</span>
           </div>
           <div class="setting-control">
             <span class="switch">
@@ -395,7 +391,7 @@ function renderSettings(): string {
             <span class="setting-desc">区域与窗口配置保存位置；更改后会迁移当前数据</span>
           </div>
           <div class="path-box">
-            <code class="path-text">${escapeHtml(shortenPath(pathLabel))}</code>
+            <code class="path-text" title="${escapeAttr(pathLabel)}">${escapeHtml(pathLabel)}</code>
             <div class="path-actions">
               <button type="button" class="setting-btn" id="btn-data-path-change">更改…</button>
               <button type="button" class="setting-btn ghost" id="btn-data-path-reset" ${dataPathInfo.isDefault ? "disabled" : ""}>恢复默认</button>
@@ -1540,12 +1536,6 @@ function escapeHtml(text: string): string {
 
 function escapeAttr(text: string): string {
   return escapeHtml(text).replaceAll("'", "&#39;");
-}
-
-function shortenPath(path: string, max = 44): string {
-  if (path.length <= max) return path;
-  const keep = Math.max(10, Math.floor((max - 3) / 2));
-  return `${path.slice(0, keep)}...${path.slice(-keep)}`;
 }
 
 async function rememberWindowBounds() {

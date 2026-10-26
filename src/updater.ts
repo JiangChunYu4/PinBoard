@@ -71,7 +71,7 @@ export function createUpdater(hooks: {
     host.querySelector(".update-status")!.textContent = status();
     const notes = host.querySelector<HTMLElement>(".update-notes")!;
     notes.hidden = !update;
-    notes.textContent = update?.body || "此版本暂无更新说明。";
+    notes.textContent = update?.body || "此版本暂无更新说明";
     host.querySelector(".update-error")!.textContent = error;
     const progress = host.querySelector<HTMLProgressElement>("progress")!;
     progress.hidden = phase !== "downloading";
@@ -116,7 +116,7 @@ export function createUpdater(hooks: {
   async function checkForUpdates() {
     if (busy()) return;
     if (!("__TAURI_INTERNALS__" in window)) {
-      error = "请在已安装的 PinBoard 中检查更新。";
+      error = "请在已安装的 PinBoard 中检查更新";
       refresh();
       return;
     }
@@ -132,7 +132,7 @@ export function createUpdater(hooks: {
       phase = next ? "available" : "idle";
     } catch (err) {
       console.error("Update check failed", err);
-      error = `检查更新失败，请确认能连接 GitHub 后重试。\n${String(err)}`;
+      error = "检查更新失败，请确认能连接 GitHub 后重试";
       phase = update ? "available" : "idle";
     }
     refresh();
@@ -166,8 +166,8 @@ export function createUpdater(hooks: {
       }
     } catch (err) {
       console.error("Update failed", err);
-      const message = phase === "installing" ? "保存数据或安装失败，请重试。" : "下载或签名验证失败，请重试。";
-      error = `${message}\n${String(err)}`;
+      const message = phase === "installing" ? "保存数据或安装失败，请重试" : "下载或签名验证失败，请重试";
+      error = message;
       phase = downloaded ? "ready" : "available";
     }
     refresh();
