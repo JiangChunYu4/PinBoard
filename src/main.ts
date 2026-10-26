@@ -1495,6 +1495,30 @@ function flashSubCopied(sub: HTMLElement) {
 
 let copiedTip: HTMLElement | null = null;
 
+/** 逐级与 overflow 祖先求交，得到元素真正可见的那块矩形；没有裁切时等于自身布局盒 */
+function visibleBox(el: HTMLElement) {
+  const rect = el.getBoundingClientRect();
+  const box = { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const style = getComputedStyle(p);
+    const clipX = style.overflowX !== "visible";
+    const clipY = style.overflowY !== "visible";
+    if (!clipX && !clipY) continue;
+    const outer = p.getBoundingClientRect();
+    const top = outer.top + p.clientTop;
+    const left = outer.left + p.clientLeft;
+    if (clipY) {
+      box.top = Math.max(box.top, top);
+      box.bottom = Math.min(box.bottom, top + p.clientHeight);
+    }
+    if (clipX) {
+      box.left = Math.max(box.left, left);
+      box.right = Math.min(box.right, left + p.clientWidth);
+    }
+  }
+  return box;
+}
+
 /**
  * 一次性「已复制」气泡：挂到 body 用 fixed 定位，浮在被复制行的下方。
  * 挂在行内会被限行容器的 overflow:hidden 裁掉，也会遮住这一行的内容——两个都不接受。
@@ -1507,7 +1531,8 @@ function showCopiedTip(sub: HTMLElement, text = "已复制") {
   document.body.appendChild(tip);
   copiedTip = tip;
 
-  const rect = sub.getBoundingClientRect();
+  // 折叠区域里子区域的布局高度仍是全高，直接用布局盒会把气泡顶到裁切区之外
+  const rect = visibleBox(sub);
   const height = tip.offsetHeight;
   const below = rect.bottom + 6;
   // 贴到视口底部时翻到该行上方，箭头同步翻转
