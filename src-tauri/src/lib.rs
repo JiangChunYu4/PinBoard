@@ -49,6 +49,9 @@ pub struct WindowConfig {
     /// 顶部「最近复制」分区开关
     #[serde(default = "default_true")]
     pub show_recent: bool,
+    /// 贴边收纳：Some("left" | "right") 表示该侧处于收起态；None = 正常窗口
+    #[serde(default)]
+    pub docked: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -112,6 +115,7 @@ impl Default for AppData {
                 click_through: false,
                 default_display_lines: 4,
                 show_recent: true,
+                docked: None,
             },
             recent: Vec::new(),
         }
@@ -400,45 +404,327 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
         .map_err(|e| format!("复制失败: {e}"))
 }
 
-/// 位置是否落在任一显示器内。拔掉副屏后旧坐标指向不存在的区域，必须放弃恢复，
-/// 否则窗口开到屏幕外就再也找不回来。
-fn position_on_screen(x: i32, y: i32, monitors: &[(i32, i32, u32, u32)]) -> bool {
-    monitors.iter().any(|&(mx, my, mw, mh)| {
-        x >= mx && x < mx.saturating_add(mw as i32) && y >= my && y < my.saturating_add(mh as i32)
-    })
+/// 把窗口矩形夹进重叠面积最大的显示器；与所有显示器都无交集时返回 None。
+/// 按矩形而非左上角判定：拖到边缘时左沿常出界成负坐标，按点判会误判成屏幕外
+fn clamp_to_screens(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    monitors: &[(i32, i32, u32, u32)],
+) -> Option<(i32, i32)> {
+    let mut best: Option<(i64, (i32, i32, i32, i32))> = None;
+    for &(mx, my, mw, mh) in monitors {
+        let right = mx.saturating_add(mw as i32);
+        let bottom = my.saturating_add(mh as i32);
+        let overlap_w = x.saturating_add(width).min(right) - x.max(mx);
+        let overlap_h = y.saturating_add(height).min(bottom) - y.max(my);
+        if overlap_w <= 0 || overlap_h <= 0 {
+            continue;
+        }
+        let area = overlap_w as i64 * overlap_h as i64;
+        if best.is_none_or(|(seen, _)| area > seen) {
+            best = Some((area, (mx, my, right, bottom)));
+        }
+    }
+    let (_, (mx, my, right, bottom)) = best?;
+    Some((
+        x.clamp(mx, (right - width).max(mx)),
+        y.clamp(my, (bottom - height).max(my)),
+    ))
 }
 
-fn restore_window_position(window: &tauri::WebviewWindow, x: f64, y: f64) {
+/// 逻辑尺寸换算成物理像素，与位置坐标统一口径
+fn physical_size(window: &tauri::WebviewWindow, width: f64, height: f64) -> (i32, i32) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    (
+        (width * scale).round().max(1.0) as i32,
+        (height * scale).round().max(1.0) as i32,
+    )
+}
+
+fn monitor_bounds(window: &tauri::WebviewWindow) -> Vec<(i32, i32, u32, u32)> {
     let Ok(monitors) = window.available_monitors() else {
-        return;
+        return Vec::new();
     };
-    let bounds: Vec<(i32, i32, u32, u32)> = monitors
+    monitors
         .iter()
         .map(|m| {
             let pos = m.position();
             let size = m.size();
             (pos.x, pos.y, size.width, size.height)
         })
-        .collect();
+        .collect()
+}
+
+/// 把窗口摆到 (x, y) 并夹进显示器内，返回 false 表示该位置已不落在任何显示器上
+fn place_window(
+    window: &tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    width_px: i32,
+    height_px: i32,
+) -> bool {
+    let bounds = monitor_bounds(window);
     let to_i32 = |v: f64| v.clamp(i32::MIN as f64, i32::MAX as f64) as i32;
-    if bounds.is_empty() || !position_on_screen(to_i32(x), to_i32(y), &bounds) {
-        return;
-    }
+    let Some((cx, cy)) = clamp_to_screens(to_i32(x), to_i32(y), width_px, height_px, &bounds) else {
+        return false;
+    };
     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-        to_i32(x),
-        to_i32(y),
+        cx, cy,
     )));
+    true
+}
+
+/// 窗口最小尺寸（与 tauri.conf.json 初始值一致，收起时临时下调）
+const MIN_WINDOW_WIDTH: f64 = 300.0;
+const MIN_WINDOW_HEIGHT: f64 = 360.0;
+const DOCK_STRIP_WIDTH: f64 = 10.0;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSnapshot {
+    /// 物理像素：窗口左上角、外框尺寸、显示器边界
+    pub x: f64,
+    pub y: f64,
+    pub width_px: f64,
+    pub height_px: f64,
+    /// 逻辑像素：窗口内部尺寸（与落盘口径一致）
+    pub width: f64,
+    pub height: f64,
+    /// 所在显示器的物理边界
+    pub monitor_x: i32,
+    pub monitor_y: i32,
+    pub monitor_width: i32,
+    pub monitor_height: i32,
+    pub scale_factor: f64,
 }
 
 #[tauri::command]
-fn apply_window_config(app: AppHandle, config: WindowConfig) -> Result<(), String> {
+fn window_snapshot(app: AppHandle) -> Result<WindowSnapshot, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let outer = window.outer_size().map_err(|e| e.to_string())?;
+    let inner = window.inner_size().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "找不到显示器".to_string())?;
+    let mpos = monitor.position();
+    let msize = monitor.size();
+    Ok(WindowSnapshot {
+        x: pos.x as f64,
+        y: pos.y as f64,
+        width_px: outer.width as f64,
+        height_px: outer.height as f64,
+        width: inner.width as f64 / scale,
+        height: inner.height as f64 / scale,
+        monitor_x: mpos.x,
+        monitor_y: mpos.y,
+        monitor_width: msize.width as i32,
+        monitor_height: msize.height as i32,
+        scale_factor: scale,
+    })
+}
+
+/// 细边贴边后的左上角 x（物理像素）
+fn dock_target_x(side: &str, monitor_x: i32, monitor_width: i32, strip_px: i32) -> i32 {
+    if side == "right" {
+        monitor_x + monitor_width - strip_px
+    } else {
+        monitor_x
+    }
+}
+
+/// 收起时纵向位置：保留用户原来的高度位置，但不许越出当前显示器
+fn dock_target_y(current_y: i32, monitor_y: i32, monitor_height: i32, height_px: i32) -> i32 {
+    let max_y = monitor_y + monitor_height - height_px;
+    current_y.clamp(monitor_y, max_y.max(monitor_y))
+}
+
+/// 收成细边：宽度降到 10px、高度不变、贴住该侧屏幕边缘。
+/// 必须先下调 min_size 再关缩放：否则左右各 4~5px 的缩放热区吃掉这 10px，
+/// 指针只看到 ↔ 光标、进不了 WebView。
+fn dock_window_inner(window: &tauri::WebviewWindow, side: &str) -> Result<(), String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "找不到显示器".to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let inner = window.inner_size().map_err(|e| e.to_string())?;
+    let current = window.outer_position().map_err(|e| e.to_string())?;
+
+    let height = (inner.height as f64 / scale).max(MIN_WINDOW_HEIGHT);
+    let strip_px = (DOCK_STRIP_WIDTH * scale).round().max(1.0) as i32;
+    let height_px = (height * scale).round() as i32;
+    let mpos = monitor.position();
+    let msize = monitor.size();
+
+    let x = dock_target_x(side, mpos.x, msize.width as i32, strip_px);
+    let y = dock_target_y(current.y, mpos.y, msize.height as i32, height_px);
+
+    let _ = window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+        DOCK_STRIP_WIDTH,
+        MIN_WINDOW_HEIGHT,
+    ))));
+    let _ = window.set_resizable(false);
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+        DOCK_STRIP_WIDTH,
+        height,
+    )));
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+    // 增删 WS_THICKFRAME 会让外框与客户区差几像素，落定后再校正一次
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+        DOCK_STRIP_WIDTH,
+        height,
+    )));
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+    // 收起后退出前台：窗口还是前台时，点任务栏图标命中的是「最小化当前窗口」，
+    // Alt+Tab 也不产生焦点变化，面板展不开
+    if foreground_is_ours() {
+        release_foreground();
+    }
+    Ok(())
+}
+
+/// 前台窗口是否属于本进程
+#[cfg(windows)]
+fn foreground_is_ours() -> bool {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetForegroundWindow() -> *mut core::ffi::c_void;
+        fn GetWindowThreadProcessId(hwnd: *mut core::ffi::c_void, pid: *mut u32) -> u32;
+    }
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_null() {
+        return false;
+    }
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut pid);
+    }
+    pid == std::process::id()
+}
+
+#[cfg(not(windows))]
+fn foreground_is_ours() -> bool {
+    false
+}
+
+/// 把前台交还给桌面：只是让自己退出前台，不去激活任何第三方窗口
+#[cfg(windows)]
+fn release_foreground() {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetShellWindow() -> *mut core::ffi::c_void;
+        fn SetForegroundWindow(hwnd: *mut core::ffi::c_void) -> i32;
+    }
+
+    let shell = unsafe { GetShellWindow() };
+    if !shell.is_null() {
+        unsafe {
+            SetForegroundWindow(shell);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn release_foreground() {}
+
+/// 摆好窗口几何：正常尺寸 / 贴边细边。返回 true 表示当前处于收起态。
+fn apply_window_geometry(window: &tauri::WebviewWindow, config: &WindowConfig) -> bool {
+    let width = config.width.max(MIN_WINDOW_WIDTH);
+    let height = config.height.max(MIN_WINDOW_HEIGHT);
+    // 恢复下限与缩放；要收细边时 dock_window_inner 会再关掉
+    let _ = window.set_resizable(true);
+    let _ = window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+        MIN_WINDOW_WIDTH,
+        MIN_WINDOW_HEIGHT,
+    ))));
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+
+    let (width_px, height_px) = physical_size(window, width, height);
+
+    let docked_side = config
+        .docked
+        .as_deref()
+        .filter(|side| *side == "left" || *side == "right");
+    let Some(side) = docked_side else {
+        if let (Some(x), Some(y)) = (config.x, config.y) {
+            place_window(window, x, y, width_px, height_px);
+        }
+        return false;
+    };
+
+    // 穿透状态下细边收不到指针事件，收起来就展不开
+    if config.click_through {
+        return false;
+    }
+
+    // 展开位置已不在任何显示器上（拔副屏 / 改分辨率）：居中展开
+    let placed = match (config.x, config.y) {
+        (Some(x), Some(y)) => place_window(window, x, y, width_px, height_px),
+        _ => false,
+    };
+    if !placed {
+        let _ = window.center();
+        return false;
+    }
+
+    dock_window_inner(window, side).is_ok()
+}
+
+#[tauri::command]
+fn dock_window(app: AppHandle, side: String) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    dock_window_inner(&window, &side)
+}
+
+#[tauri::command]
+fn undock_window(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    let width = width.max(MIN_WINDOW_WIDTH);
+    let height = height.max(MIN_WINDOW_HEIGHT);
+    // 从最小化唤醒时先还原：最小化下设尺寸只改「还原后」的边界，会还原成一条细边
+    let _ = window.unminimize();
+    // 收起态禁止缩放，展开前必须放开，否则窗口再也拖不动大小
+    let _ = window.set_resizable(true);
+    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)));
+    let (width_px, height_px) = physical_size(&window, width, height);
+    if !place_window(&window, x, y, width_px, height_px) {
+        let _ = window.center();
+    }
+    let _ = window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+        MIN_WINDOW_WIDTH,
+        MIN_WINDOW_HEIGHT,
+    ))));
+    Ok(())
+}
+
+/// 返回是否落在收起态（细边）
+#[tauri::command]
+fn apply_window_config(app: AppHandle, config: WindowConfig) -> Result<bool, String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
 
-    let width = config.width.max(300.0);
-    let height = config.height.max(360.0);
-    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+    let docked = apply_window_geometry(&window, &config);
     let _ = window.set_always_on_top(config.always_on_top);
     let _ = config.opacity;
 
@@ -455,7 +741,7 @@ fn apply_window_config(app: AppHandle, config: WindowConfig) -> Result<(), Strin
         // 穿透开启时标题栏命中检测线程会按光标位置微调；设置页暂停时整窗可点
         let _ = window.set_ignore_cursor_events(config.click_through && !paused);
     }
-    Ok(())
+    Ok(docked)
 }
 
 /// 临时暂停鼠标穿透（设置页打开时），不修改已保存的 clickThrough 偏好
@@ -476,6 +762,63 @@ fn set_click_through_paused(app: AppHandle, paused: bool) -> Result<(), String> 
         let _ = window.set_ignore_cursor_events(enabled && !paused);
     }
     Ok(())
+}
+
+/// 只切换鼠标穿透，不碰窗口几何，也不改动「暂停」状态——暂停由设置页与过渡流程单独维护
+#[tauri::command]
+fn set_click_through(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    *state
+        .click_through
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = enabled;
+    let paused = *state
+        .click_through_paused
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_ignore_cursor_events(enabled && !paused);
+    }
+    Ok(())
+}
+
+/// 屏幕坐标点（物理像素）
+#[cfg(windows)]
+#[repr(C)]
+struct CursorPoint {
+    x: i32,
+    y: i32,
+}
+
+/// 系统光标是否落在给定矩形内（穿透时 WebView 收不到指针事件）
+#[cfg(windows)]
+fn cursor_in_rect(x: i32, y: i32, width: i32, height: i32) -> Result<bool, String> {
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetCursorPos(point: *mut CursorPoint) -> i32;
+    }
+
+    let mut pt = CursorPoint { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut pt) } == 0 {
+        return Err("读取光标位置失败".to_string());
+    }
+    Ok(pt.x >= x && pt.x < x + width && pt.y >= y && pt.y < y + height)
+}
+
+#[cfg(not(windows))]
+fn cursor_in_rect(_x: i32, _y: i32, _width: i32, _height: i32) -> Result<bool, String> {
+    Err("仅 Windows 支持".to_string())
+}
+
+#[tauri::command]
+fn cursor_inside_window(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    cursor_in_rect(pos.x, pos.y, size.width as i32, size.height as i32)
 }
 
 /// 与前端 `.titlebar` 高度一致（逻辑像素）
@@ -775,7 +1118,12 @@ pub fn run() {
             save_data,
             copy_text,
             apply_window_config,
+            window_snapshot,
+            dock_window,
+            undock_window,
             set_click_through_paused,
+            set_click_through,
+            cursor_inside_window,
             set_launch_on_startup,
             get_data_path_info,
             choose_data_file_path,
@@ -786,14 +1134,10 @@ pub fn run() {
             let data = read_data(&path);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_shadow(false);
-                let width = data.window.width.max(300.0);
-                let height = data.window.height.max(360.0);
-                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+                // 含贴边收纳：上次收着就仍以细边启动，避免开机先弹一整块面板
+                let _ = apply_window_geometry(&window, &data.window);
                 let _ = window.set_always_on_top(data.window.always_on_top);
                 let _ = window.set_ignore_cursor_events(data.window.click_through);
-                if let (Some(x), Some(y)) = (data.window.x, data.window.y) {
-                    restore_window_position(&window, x, y);
-                }
             }
 
             {
@@ -820,39 +1164,66 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::position_on_screen;
+    use super::clamp_to_screens;
 
     const SINGLE: [(i32, i32, u32, u32); 1] = [(0, 0, 1920, 1080)];
     const DUAL: [(i32, i32, u32, u32); 2] = [(0, 0, 1920, 1080), (1920, 0, 2560, 1440)];
 
     #[test]
-    fn accepts_position_inside_primary_screen() {
-        assert!(position_on_screen(0, 0, &SINGLE));
-        assert!(position_on_screen(100, 100, &SINGLE));
+    fn keeps_position_inside_screen() {
+        assert_eq!(clamp_to_screens(100, 100, 400, 500, &SINGLE), Some((100, 100)));
+        assert_eq!(clamp_to_screens(0, 0, 400, 500, &SINGLE), Some((0, 0)));
     }
 
     #[test]
-    fn accepts_position_inside_secondary_screen() {
-        assert!(position_on_screen(2500, 300, &DUAL));
-        // 主副屏接缝处落在副屏内
-        assert!(position_on_screen(1920, 100, &DUAL));
+    fn keeps_position_inside_secondary_screen() {
+        assert_eq!(
+            clamp_to_screens(2500, 300, 400, 500, &DUAL),
+            Some((2500, 300))
+        );
     }
 
     #[test]
-    fn rejects_position_after_secondary_removed() {
-        assert!(!position_on_screen(2500, 300, &SINGLE));
+    fn pulls_back_window_hanging_off_left_edge() {
+        // 拖到左边缘时窗口左沿出界成负坐标：贴回 0，不能判成「屏幕外」
+        assert_eq!(clamp_to_screens(-5, 100, 486, 582, &SINGLE), Some((0, 100)));
+        assert_eq!(
+            clamp_to_screens(-243, 100, 486, 582, &SINGLE),
+            Some((0, 100))
+        );
     }
 
     #[test]
-    fn rejects_position_outside_screen() {
-        assert!(!position_on_screen(-200, 100, &SINGLE));
-        assert!(!position_on_screen(1920, 100, &SINGLE));
-        assert!(!position_on_screen(100, 1080, &SINGLE));
+    fn pulls_back_window_hanging_off_right_and_bottom() {
+        assert_eq!(
+            clamp_to_screens(1800, 1000, 486, 582, &SINGLE),
+            Some((1920 - 486, 1080 - 582))
+        );
     }
 
     #[test]
-    fn rejects_when_no_monitors_reported() {
-        assert!(!position_on_screen(10, 10, &[]));
+    fn clamps_oversized_window_to_monitor_origin() {
+        // 窗口比显示器还大时优先保住左上角，至少标题栏可抓
+        assert_eq!(clamp_to_screens(-100, -100, 2400, 1200, &SINGLE), Some((0, 0)));
+    }
+
+    #[test]
+    fn snaps_straddling_window_to_larger_monitor() {
+        // 跨在接缝上时归到大部分所在的那块屏，避免展开后一半在另一块屏上
+        assert_eq!(
+            clamp_to_screens(1900, 100, 486, 582, &DUAL),
+            Some((1920, 100))
+        );
+    }
+
+    #[test]
+    fn drops_position_after_secondary_removed() {
+        assert_eq!(clamp_to_screens(2500, 300, 400, 500, &SINGLE), None);
+    }
+
+    #[test]
+    fn drops_position_without_monitors() {
+        assert_eq!(clamp_to_screens(10, 10, 400, 500, &[]), None);
     }
 
     #[test]
@@ -869,6 +1240,44 @@ mod tests {
         let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(cfg.x, Some(-1200.0));
         assert_eq!(cfg.y, Some(340.0));
+    }
+
+    #[test]
+    fn window_config_without_docked_defaults_to_none() {
+        let raw = r#"{"width":360.0,"height":520.0,"opacity":0.96,"alwaysOnTop":true}"#;
+        let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(cfg.docked, None);
+    }
+
+    #[test]
+    fn dock_target_x_flush_to_each_side() {
+        // 主屏 1920 宽，细边 10px
+        assert_eq!(super::dock_target_x("left", 0, 1920, 10), 0);
+        assert_eq!(super::dock_target_x("right", 0, 1920, 10), 1910);
+        // 副屏起点 1920：贴右边缘要落在副屏自身的右沿
+        assert_eq!(super::dock_target_x("left", 1920, 2560, 10), 1920);
+        assert_eq!(super::dock_target_x("right", 1920, 2560, 10), 4470);
+    }
+
+    #[test]
+    fn dock_target_y_keeps_position_inside_monitor() {
+        // 正常范围内保持原位置
+        assert_eq!(super::dock_target_y(300, 0, 1080, 520), 300);
+        // 上半屏被拖出边界时回到顶边
+        assert_eq!(super::dock_target_y(-200, 0, 1080, 520), 0);
+        // 下沿溢出时贴住底边
+        assert_eq!(super::dock_target_y(900, 0, 1080, 520), 560);
+        // 窗口比屏幕还高：不要算出负数位置，贴顶
+        assert_eq!(super::dock_target_y(100, 0, 400, 520), 0);
+    }
+
+    #[test]
+    fn window_config_round_trip_keeps_docked_side() {
+        let raw = r#"{"width":360.0,"height":520.0,"opacity":0.96,"alwaysOnTop":true,"docked":"right"}"#;
+        let cfg: super::WindowConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(cfg.docked.as_deref(), Some("right"));
+        let back = serde_json::to_string(&cfg).unwrap();
+        assert!(back.contains(r#""docked":"right""#));
     }
 
     #[test]

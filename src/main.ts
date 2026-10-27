@@ -15,13 +15,17 @@ import {
   chooseDataFilePath,
   copyText,
   getDataPathInfo,
+  getWindowSnapshot,
+  isCursorInsideWindow,
   loadData,
   resetDataFilePath,
   saveData,
+  setClickThrough,
   setClickThroughPaused,
   setLaunchOnStartup,
   type DataPathInfo,
 } from "./storage";
+import { createDock } from "./dock";
 
 const app = document.querySelector("#app")!;
 
@@ -61,6 +65,17 @@ const updater = createUpdater({
       tipResumeCleanup = null;
     }
     await setClickThroughPaused(paused || currentView === "settings");
+  },
+});
+
+const dock = createDock({
+  isClickThrough: () => data.window.clickThrough,
+  isEditing: () => editingId !== null,
+  isPointerInside: isCursorInsideWindow,
+  onPreferenceChange(side) {
+    if (side) data.window.docked = side;
+    else delete data.window.docked;
+    void persist();
   },
 });
 
@@ -928,13 +943,18 @@ function exitEdit() {
 
 let tipResumeCleanup: (() => void) | null = null;
 
+/** 恢复穿透后重新盯住指针，否则贴边会一直停在展开态 */
+function releaseClickThroughPause() {
+  void setClickThroughPaused(false).finally(() => dock.resumeAfterClickThrough());
+}
+
 /** 离开设置后若立刻恢复穿透，顶栏收不到 mouseleave，气泡会卡住且内容区点不到 */
 function resumeClickThroughAfterTitlebarLeave() {
   tipResumeCleanup?.();
   tipResumeCleanup = null;
 
   if (!data.window.clickThrough) {
-    void setClickThroughPaused(false);
+    releaseClickThroughPause();
     return;
   }
 
@@ -949,7 +969,7 @@ function resumeClickThroughAfterTitlebarLeave() {
     window.removeEventListener("pointermove", onMove, true);
     titlebar?.removeEventListener("pointerleave", finish);
     tipResumeCleanup = null;
-    void setClickThroughPaused(false);
+    releaseClickThroughPause();
   };
 
   const onMove = (e: PointerEvent) => {
@@ -1042,7 +1062,17 @@ function bindSettingsEvents() {
     const previous = data.window.clickThrough;
     data.window.clickThrough = enabled;
     try {
-      await applyWindowConfig(data.window);
+      if (enabled) {
+        // 设置页里必须保持可点，否则一开就再也点不回来；先暂停再开，中途不会闪出穿透态
+        await setClickThroughPaused(currentView === "settings");
+        // 细边在穿透下收不到指针，先展开再开；只切开关，不重套几何
+        await dock.expandForClickThrough();
+        await setClickThrough(true);
+      } else {
+        await setClickThrough(false);
+        await setClickThroughPaused(currentView === "settings");
+        dock.resumeAfterClickThrough();
+      }
       await persist();
     } catch (err) {
       data.window.clickThrough = previous;
@@ -1569,6 +1599,8 @@ async function rememberWindowBounds() {
     const win = getCurrentWindow();
     // 最小化时系统会把窗口挪到屏幕外，写进配置下次就开在看不见的地方
     if (await win.isMinimized()) return;
+    // 贴边判定与「收纳期间不记录」都在这里收口，命中就不写尺寸
+    if (await dock.handleBoundsSettled()) return;
     const factor = await win.scaleFactor();
     const physical = await win.innerSize();
     const width = Math.round(physical.width / factor);
@@ -1603,6 +1635,10 @@ async function boot() {
       data.window.defaultDisplayLines ?? DEFAULT_DISPLAY_LINES,
     );
     data.window.showRecent = data.window.showRecent !== false;
+    // 手改过的数据可能塞进非法值，不认识就当未收纳
+    if (data.window.docked !== "left" && data.window.docked !== "right") {
+      delete data.window.docked;
+    }
     // 手改过或来自旧版本的数据同样只取前 5 条，空文本直接丢弃
     for (const item of data.recent ?? []) {
       if (recentCopies.length >= RECENT_COPIES_LIMIT) break;
@@ -1614,7 +1650,39 @@ async function boot() {
     } catch {
       dataPathInfo = { path: "", isDefault: true };
     }
-    await applyWindowConfig(data.window);
+    // Rust 按 docked 决定启动形态；false = 没落成细边（位置失效或开了穿透）
+    const dockedApplied = await applyWindowConfig(data.window);
+    if (data.window.docked && !dockedApplied && !data.window.clickThrough) {
+      // 位置已不存在（拔副屏 / 改分辨率）就退回普通窗口；穿透造成的未贴边不算
+      delete data.window.docked;
+      void persist();
+    }
+    const savedBounds =
+      data.window.x != null && data.window.y != null
+        ? {
+            x: data.window.x,
+            y: data.window.y,
+            width: data.window.width,
+            height: data.window.height,
+          }
+        : null;
+    if (dockedApplied && savedBounds && data.window.docked) {
+      // 位置可能停在「拖到边缘之前」，改成贴边 x，下次展开才从边缘滑出
+      const snapshot = await getWindowSnapshot().catch(() => null);
+      if (snapshot) {
+        const widthPx = Math.round(savedBounds.width * (snapshot.scaleFactor || 1));
+        const edgeX =
+          data.window.docked === "left"
+            ? snapshot.monitorX
+            : snapshot.monitorX + snapshot.monitorWidth - widthPx;
+        if (Math.abs(savedBounds.x - edgeX) > 2) {
+          savedBounds.x = edgeX;
+          data.window.x = edgeX;
+          void persist();
+        }
+      }
+    }
+    dock.hydrate(data.window.docked ?? null, savedBounds, dockedApplied);
 
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -1628,6 +1696,14 @@ async function boot() {
       };
       await win.onResized(rememberBounds);
       await win.onMoved(rememberBounds);
+
+      // 点任务栏图标 / Alt+Tab 切回时展开，否则只看到蓝边被吸向图标；
+      // 启动瞬间窗口自己会拿一次焦点，用时间窗挡掉
+      const wakeArmedAt = performance.now() + 900;
+      await win.onFocusChanged(({ payload: focused }) => {
+        if (!focused || performance.now() < wakeArmedAt) return;
+        dock.handleWake();
+      });
     } catch {
       /* browser preview */
     }

@@ -11,6 +11,9 @@ export interface Block {
   subRegions?: string[];
 }
 
+/** 贴边收纳的吸附侧 */
+export type DockSide = "left" | "right";
+
 export interface WindowConfig {
   width: number;
   height: number;
@@ -27,6 +30,8 @@ export interface WindowConfig {
   defaultDisplayLines: number;
   /** 顶部「最近复制」分区开关 */
   showRecent: boolean;
+  /** 贴边收纳：存在时启动即收成该侧细边 */
+  docked?: DockSide;
 }
 
 /** 最近复制条目：与区域数据一同落盘，重启后原样恢复 */

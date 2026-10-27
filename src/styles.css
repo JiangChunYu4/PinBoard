@@ -34,6 +34,9 @@ body {
 }
 
 #app {
+  position: relative;
+  /* 盖在细边之上，滑出时细边不会透出来 */
+  z-index: 1;
   width: 100%;
   height: 100%;
   padding: 0;
@@ -1588,4 +1591,75 @@ body.is-reordering .block-sub {
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- 贴边收纳 ---------- */
+
+/* 收起后窗口只有 10px 宽，这层就是全部可见内容 */
+.dock-strip {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  pointer-events: none;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(180deg, rgba(61, 156, 240, 0.72), rgba(61, 156, 240, 0.38));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  opacity: 0;
+}
+
+body.is-docked .dock-strip,
+body.dock-strip-on .dock-strip {
+  opacity: 0.86;
+  pointer-events: auto;
+  /* 只淡入不淡出：面板半透明，细边淡出会拖出一条蓝线 */
+  transition: opacity 100ms ease;
+}
+
+body.is-docked .dock-strip:hover {
+  opacity: 1;
+}
+
+/* 贴右侧时圆角与强调方向镜像 */
+body[data-dock="right"] .dock-strip {
+  right: 0;
+  left: auto;
+  border-radius: 4px 0 0 4px;
+}
+
+body.is-docked #app {
+  visibility: hidden;
+  opacity: 0;
+}
+
+body {
+  --dock-shift: -100%;
+}
+
+body[data-dock="right"] {
+  --dock-shift: 100%;
+}
+
+/* 面板推到屏幕外：改窗口尺寸时藏住被挤扁的中间态 */
+body.dock-park .shell {
+  transform: translateX(var(--dock-shift));
+}
+
+/* 滑入减速、滑出加速（让位要比进入快） */
+body.dock-in .shell {
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+
+body.dock-out .shell {
+  transition: transform 140ms cubic-bezier(0.4, 0, 1, 1);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.dock-in .shell,
+  body.dock-out .shell {
+    transition-duration: 1ms;
+  }
 }
