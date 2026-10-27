@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/JiangChunYu4/PinBoard/releases/latest"><img src="https://img.shields.io/github/v/release/JiangChunYu4/PinBoard?style=for-the-badge&label=Download&logo=github" alt="Latest Release" /></a>
+  <a href="https://github.com/JiangChunYu4/PinBoard/releases"><img src="https://img.shields.io/github/downloads/JiangChunYu4/PinBoard/total?style=for-the-badge&label=Downloads" alt="Downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Platform-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
 </p>
