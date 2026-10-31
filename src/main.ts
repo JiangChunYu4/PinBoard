@@ -172,6 +172,8 @@ function applyPanelOpacity(value: number) {
 let saveQueue: Promise<unknown> = Promise.resolve();
 
 async function persist() {
+  // 落盘前先对账：文件里的条目必须能指回当前某个区域，否则下次启动会带着幽灵项回来
+  if (reconcileRecent()) refreshRecent();
   const next = saveQueue.then(() => saveData(data));
   saveQueue = next.catch(() => {});
   await next;
@@ -464,6 +466,49 @@ function refreshRecent() {
   if (!section || !list) return;
   list.innerHTML = recentCopies.map(renderRecentItem).join("");
   section.hidden = recentCopies.length === 0;
+}
+
+/**
+ * 文本级对账：把条目重新认领回当前的复制源。
+ * 条目存的是复制时刻的快照，源改动后不会自己更新——所以按文本重算：
+ * 命中则保留并把标签刷成当前标题（子区域带段号），未命中即删除。
+ * 代价是改一个标点条目也会消失，需要重新复制才回来；换来的是永不给出过期文本。
+ */
+function reconcileRecent(): boolean {
+  if (recentCopies.length === 0) return false;
+  // 文本 → 当前源的标签与标题；同一文本被多个源复制时按块顺序取第一个
+  const sources = new Map<string, { label: string; title: string }>();
+  for (const block of data.blocks) {
+    const whole = blockContentText(block);
+    if (whole.trim() && !sources.has(whole)) {
+      sources.set(whole, { label: copySourceLabel(block), title: block.title });
+    }
+    block.subRegions?.forEach((sub, index) => {
+      if (!sub.trim() || sources.has(sub)) return;
+      sources.set(sub, { label: copySourceLabel(block, index), title: block.title });
+    });
+  }
+
+  let changed = false;
+  const kept: RecentCopy[] = [];
+  for (const item of recentCopies) {
+    const source = sources.get(item.text);
+    if (!source) {
+      changed = true;
+      continue;
+    }
+    if (source.label === item.label && source.title === item.title) {
+      kept.push(item);
+      continue;
+    }
+    kept.push({ text: item.text, label: source.label, title: source.title });
+    changed = true;
+  }
+  if (!changed) return false;
+  // 原地替换：data.recent 与本数组是同一个引用，排序与落盘都跟着走
+  recentCopies.length = 0;
+  recentCopies.push(...kept);
+  return true;
 }
 
 /** 条目复制：默认复制内容，copyTitle 时只复制来源区域标题（不带段号） */
@@ -1645,6 +1690,11 @@ async function boot() {
       if (!item?.text?.trim()) continue;
       recentCopies.push({ text: item.text, label: item.label ?? "", title: item.title ?? "" });
     }
+    // 分区与 data 共用同一个数组，任何一次保存都带着最新的最近复制
+    data.recent = recentCopies;
+    // 启动即对账：上次退出后被改 / 删 / 重排的源，条目不该留着过期文本与旧标签；
+    // 有改动就写回，否则幽灵条目会一直躺在文件里等下次启动再清一遍
+    if (reconcileRecent()) void persist();
     try {
       dataPathInfo = await getDataPathInfo();
     } catch {
@@ -1711,9 +1761,9 @@ async function boot() {
     console.error(err);
     data = structuredClone(DEFAULT_DATA);
   }
-  bindCopyTipChrome();
-  // 分区与 data 共用同一个数组，任何一次保存都带着最新的最近复制
+  // 兜底：读数据失败时 data 被整体替换，不重新挂上就会把 recent 字段写没
   data.recent = recentCopies;
+  bindCopyTipChrome();
   // 窗口尺寸变化后子区域编辑框需重算高度，避免撑高不足导致内容被裁
   window.addEventListener("resize", autoGrowSubInputs);
   render();
