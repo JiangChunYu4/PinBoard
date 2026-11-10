@@ -40,7 +40,7 @@
 | 💾 **本地保存**      | 数据存于本机 `pinboard.json`，路径可自定义，无需联网 |
 
 <p align="center">
-  <a href="docs/assets/pinboard-demo.mp4">▶ 观看演示视频（47 秒 · MP4 · 约 4.7 MB）</a>
+  <img src="docs/assets/pinboard-demo.gif" width="720" alt="PinBoard 功能演示（10 秒循环）" />
 </p>
 
 ---
